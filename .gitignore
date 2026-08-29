@@ -1,0 +1,13 @@
+# runtime data: databases, logs, exported ledgers (regenerated on every tick)
+data/*
+!data/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+py/.venv/
+.venv/
+
+# local working notes (not part of the release)
+_extraction_notes.md

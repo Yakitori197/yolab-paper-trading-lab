@@ -1,0 +1,11 @@
+{
+  "_說明": "紙上交易設定檔。symbols 可自由增減(需為幣安現貨交易對;若要結算資金費率,該幣也要有 USDT-M 永續)。tick 為幣安 USDS-M 期貨的最小跳動單位,用於滑價模擬。改動任何值後請刪除 data/paper.db 重新起算,避免新舊假設混在同一本帳。",
+  "symbols": [
+    { "symbol": "BTC/USDT", "tick": 0.1 },
+    { "symbol": "ETH/USDT", "tick": 0.01 },
+    { "symbol": "SOL/USDT", "tick": 0.01 }
+  ],
+  "paper_epoch": "2026-08-01 00:00",
+  "cash0": 10000.0,
+  "fee": 0.0005
+}

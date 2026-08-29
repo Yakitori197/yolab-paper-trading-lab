@@ -1,0 +1,2495 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>交易儀表板</title>
+<script src="/static/vendor/chart.umd.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+  /* E16: industry blueprint design system (from the user's Claude Design
+     "Trading Dashboard" mockup). Single steel-blue accent; direction is
+     shown with hollow/solid candles and signs, never red/green -- red is
+     reserved for the engineering-mode banner. Light theme is the default;
+     [data-theme="dark"] swaps the token values only. */
+  :root {
+    --color-bg: #f2f2f3;
+    --color-surface: #e9e9ea;
+    --color-text: #1d1f20;
+    --color-accent: #5980a6;
+    --color-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+    --color-accent-100: #eef6ff;
+    --color-accent-300: #b5d9fd;
+    --color-accent-700: #416180;
+    --color-accent-800: #2c455d;
+    --color-neutral-200: #e7e7ea;
+    --color-neutral-300: #d4d4d7;
+    --color-neutral-500: #98989b;
+    --color-neutral-800: #424244;
+    --color-warn: #b4443f;
+    --font-heading: "Barlow Condensed", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    --font-body: "Barlow", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  }
+  [data-theme="dark"] {
+    --color-bg: #16222e;
+    --color-surface: #1d2d3d;
+    --color-text: #e9edf1;
+    --color-accent: #94bce3;
+    --color-divider: color-mix(in srgb, #e9edf1 20%, transparent);
+    --color-accent-100: #22384c;
+    --color-accent-300: #3f5f7d;
+    --color-accent-700: #b9d3ea;
+    --color-accent-800: #cfe1f1;
+    --color-neutral-200: #0e161e;
+    --color-neutral-300: #2b3b4b;
+    --color-neutral-500: #7d8b98;
+    --color-neutral-800: #dbe3ea;
+    --color-warn: #d0605a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: var(--font-body); font-variant-numeric: tabular-nums;
+    background: var(--color-neutral-200); color: var(--color-text); font-size: 14px;
+  }
+  .text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .hfont { font-family: var(--font-heading); }
+
+  /* blueprint frame with registration corner marks */
+  .blueprint { position: relative; border: 1px solid var(--color-divider); background: var(--color-bg); }
+  .blueprint > .corner {
+    position: absolute; width: 11px; height: 11px;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent); pointer-events: none;
+  }
+  .blueprint > .corner::before, .blueprint > .corner::after {
+    content: ""; position: absolute; background: currentColor;
+  }
+  .blueprint > .corner::before { left: 5px; top: 0; width: 1px; height: 100%; }
+  .blueprint > .corner::after  { top: 5px; left: 0; width: 100%; height: 1px; }
+  .blueprint > .corner.tl { top: -6px; left: -6px; }
+  .blueprint > .corner.tr { top: -6px; right: -6px; }
+  .blueprint > .corner.bl { bottom: -6px; left: -6px; }
+  .blueprint > .corner.br { bottom: -6px; right: -6px; }
+
+  /* engineering-mode banner: the only red on the page (functional warning) */
+  #banner {
+    border: 1px solid var(--color-warn); border-left: 6px solid var(--color-warn);
+    background: var(--color-bg); display: flex; align-items: stretch; margin-bottom: 18px;
+  }
+  #banner .stripe {
+    flex: none; width: 52px; opacity: .5;
+    background: repeating-linear-gradient(45deg, var(--color-warn) 0 7px, transparent 7px 14px);
+  }
+  #banner .body { padding: 11px 16px 12px; flex: 1; }
+  #banner .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  #banner .mode {
+    font-family: var(--font-heading); font-weight: 700; font-size: 15px;
+    letter-spacing: .14em; color: var(--color-warn);
+  }
+  #banner .line { font-size: 13px; line-height: 1.5; }
+  #banner .sub { font-size: 11.5px; line-height: 1.6; margin-top: 4px; }
+
+  main { padding: 22px 20px 60px; max-width: 1460px; margin: 0 auto; }
+
+  /* buttons / seg / tags */
+  button { font: inherit; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    cursor: pointer; font-family: var(--font-heading); font-weight: 600; font-size: 13px;
+    color: var(--color-text); background: transparent;
+    border: 1px solid var(--color-divider); border-radius: 0; padding: 5px 13px;
+  }
+  .btn:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+  .btn-ghost { border-color: transparent; color: var(--color-accent-700); }
+  .seg { display: inline-flex; overflow: hidden; border: 1px solid var(--color-divider); }
+  .seg .seg-opt {
+    background: transparent; border: 0; color: var(--color-text); cursor: pointer;
+    padding: 6px 14px; font-size: 13px;
+  }
+  .seg .seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
+  .seg .seg-opt.active { background: var(--color-accent); color: var(--color-bg); }
+  .seg .seg-opt:not(.active):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+  .tag {
+    display: inline-flex; align-items: center; font-size: 10.5px; letter-spacing: .02em;
+    padding: 2px 9px; white-space: nowrap;
+  }
+  .tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
+  .tag-neutral { background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--color-text); }
+  .tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent-700); }
+  .tag-warn { border: 1px solid var(--color-warn); color: var(--color-warn); }
+
+  /* main board card */
+  #board-head {
+    display: flex; align-items: center; gap: 20px; padding: 12px 18px;
+    border-bottom: 1px solid var(--color-divider); flex-wrap: wrap;
+  }
+  #board-head .title { display: flex; align-items: baseline; gap: 9px; }
+  #board-head .title .name {
+    font-family: var(--font-heading); font-weight: 600; font-size: 19px; letter-spacing: .1em;
+  }
+  #board-right { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  #sys-health { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+  #sys-health .led { width: 8px; height: 8px; background: var(--color-accent); }
+  #sys-health.fail { color: var(--color-warn); font-weight: 700; }
+  #sys-health.fail .led { background: var(--color-warn); }
+  #last-updated { color: color-mix(in srgb, var(--color-text) 55%, transparent); font-size: 11.5px; }
+
+  /* bar clock: 4 cells */
+  #clock-grid { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--color-divider); }
+  #clock-grid .cell { padding: 11px 18px; }
+  #clock-grid .cell + .cell { border-left: 1px solid var(--color-divider); }
+  #clock-grid .lbl { font-size: 10.5px; letter-spacing: .08em; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  #clock-grid .big { font-family: var(--font-heading); font-size: 17px; margin-top: 2px; }
+  #clock-grid .big .dim { font-size: 12px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  #clock-grid .note { font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); margin-top: 3px; }
+  #clock-grid .note.bad { color: var(--color-warn); font-weight: 700; }
+  #forming-track { flex: 1; height: 8px; border: 1px solid var(--color-divider); display: flex; }
+  #forming-fill { background: var(--color-accent); opacity: .8; }
+
+  /* account cells */
+  #acct-grid { display: grid; grid-template-columns: 1.15fr 1fr 1fr 1fr; }
+  #acct-grid .cell { padding: 14px 18px; }
+  #acct-grid .cell + .cell { border-left: 1px solid var(--color-divider); }
+  #acct-grid .total-cell { background: var(--color-accent-100); }
+  #acct-grid .sym-cell { cursor: pointer; }
+  #acct-grid .sym-cell:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+  #acct-grid .sym-cell.active { box-shadow: inset 3px 0 0 var(--color-accent); }
+  #acct-grid .row1 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  #acct-grid .sym { font-family: var(--font-heading); font-size: 15px; }
+  #acct-grid .equity { font-family: var(--font-heading); font-size: 26px; line-height: 1.15; margin-top: 5px; }
+  #acct-grid .total-cell .equity { font-size: 34px; line-height: 1.1; margin-top: 6px; }
+  #acct-grid .ret { font-size: 12.5px; }
+  #acct-grid .ret.up { color: var(--color-accent-800); }
+  #acct-grid .spark { width: 100%; height: 42px; display: block; margin-top: 8px; cursor: pointer; }
+  #acct-grid .verdict { font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); margin-top: 2px; }
+  #acct-expand-host { border-top: 1px solid var(--color-divider); padding: 12px 18px; }
+  #acct-expand-host:empty { display: none; }
+  .acct-balance-canvas { width: 100%; max-height: 220px; }
+  #acct-status { display: none; font-size: 12.5px; color: var(--color-warn); padding: 10px 18px; border-top: 1px solid var(--color-divider); line-height: 1.6; }
+  #acct-status.show { display: block; }
+
+  /* two-column zone */
+  .two-col { display: grid; grid-template-columns: 1fr 404px; gap: 18px; align-items: start; margin-top: 18px; }
+  .col-stack { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .card-pad { padding: 14px 18px; }
+  .card-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .card-title .t { font-family: var(--font-heading); font-size: 17px; }
+  .card-title .s { font-size: 11.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .foot-note {
+    font-size: 11.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    margin: 0; padding: 11px 18px; border-top: 1px solid var(--color-divider); line-height: 1.6;
+  }
+
+  /* chart card */
+  #chart-head { display: flex; align-items: baseline; gap: 14px; padding: 13px 18px 10px; flex-wrap: wrap; }
+  #chart-head .sym { font-family: var(--font-heading); font-size: 17px; }
+  #chart-head .px { font-family: var(--font-heading); font-size: 26px; line-height: 1; }
+  .live-status { font-size: 10.5px; padding: 2px 9px; }
+  .live-status.live { background: var(--color-accent-100); color: var(--color-accent-800); }
+  .live-status.reconnecting { border: 1px solid var(--color-warn); color: var(--color-warn); }
+  .live-status.poll { background: color-mix(in srgb, var(--color-text) 8%, transparent); color: color-mix(in srgb, var(--color-text) 60%, transparent); }
+  #rule-info { display: flex; gap: 18px; padding: 0 18px 10px; font-size: 11.5px; flex-wrap: wrap; }
+  #draw-toolbar { display: flex; gap: 6px; padding: 0 18px 10px; }
+  .draw-btn {
+    background: transparent; color: var(--color-text); border: 1px solid var(--color-divider);
+    width: 30px; height: 30px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+  }
+  .draw-btn.active { background: var(--color-accent); color: var(--color-bg); border-color: var(--color-accent); }
+  #draw-clear-btn { color: var(--color-warn); }
+  #chart-stage { position: relative; width: 100%; height: 340px; border-top: 1px solid var(--color-divider); }
+  #main-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+  #chart-message {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    color: color-mix(in srgb, var(--color-text) 55%, transparent); font-size: 13px; background: var(--color-bg);
+  }
+
+  /* overlay / pane toggle row with LED buttons */
+  #ind-row {
+    display: flex; align-items: center; gap: 8px; padding: 11px 18px;
+    border-top: 1px solid var(--color-divider); flex-wrap: wrap; font-size: 11.5px;
+  }
+  #ind-row .grp { letter-spacing: .06em; color: color-mix(in srgb, var(--color-text) 55%, transparent); font-size: 11px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px;
+    border: 1px solid var(--color-divider); font-size: 11.5px; background: transparent;
+    color: var(--color-text); cursor: pointer;
+  }
+  .chip .led { width: 6px; height: 6px; background: transparent; box-shadow: inset 0 0 0 1px currentColor; display: block; }
+  .chip.locked { border-color: var(--color-accent); color: var(--color-accent-800); background: var(--color-accent-100); cursor: default; }
+  .chip.locked .led { background: currentColor; box-shadow: none; }
+  .ind-btn.active { border-color: var(--color-accent); color: var(--color-accent-800); background: var(--color-accent-100); }
+  .ind-btn.active .led { background: currentColor; box-shadow: none; }
+  .ind-btn:not(.active) { opacity: .55; }
+
+  #panes-container { display: flex; flex-direction: column; }
+  .pane-block { display: flex; flex-direction: column; height: 90px; border-top: 1px solid var(--color-divider); overflow: hidden; }
+  .pane-resizer { height: 6px; cursor: row-resize; background: transparent; flex: 0 0 auto; }
+  .pane-resizer:hover { background: var(--color-accent); }
+  .pane-canvas { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; display: block; }
+
+  /* trades table */
+  .table-wrap { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent); white-space: nowrap; }
+  th {
+    font-size: 11px; letter-spacing: .06em; font-weight: 600;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+    border-bottom: 1px solid var(--color-divider); position: sticky; top: 0; background: var(--color-bg);
+  }
+  td.num, th.num { text-align: right; }
+  td.pnl { text-align: right; font-family: var(--font-heading); font-size: 14px; }
+  #trades-table tr.sub td {
+    font-size: 11.5px; line-height: 1.6; color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    white-space: normal; padding-top: 0; border-bottom: 1px solid var(--color-divider);
+  }
+  #trades-table tr.open-row td { background: var(--color-accent-100); }
+  .empty { color: color-mix(in srgb, var(--color-text) 55%, transparent); padding: 10px 0; }
+  #signals-table th, #signals-table td { text-align: center; }
+  .table-wrap.scrolly { max-height: 420px; border: 1px solid var(--color-divider); }
+
+  /* strategy log timeline */
+  .log-row { display: grid; grid-template-columns: 96px 1fr; gap: 14px; padding: 0 0 10px; }
+  .log-row .when { font-family: var(--font-heading); font-size: 14px; text-align: right; padding-top: 1px; }
+  .log-row .when .dim { font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .log-row .when.range { font-family: var(--font-body); font-size: 11.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .log-row .body { border-left: 1px solid var(--color-divider); padding-left: 16px; position: relative; }
+  .log-row .body.hot { border-left-color: var(--color-accent); }
+  .log-row .dot {
+    position: absolute; left: -4px; top: 5px; width: 7px; height: 7px;
+    border: 1px solid var(--color-divider); background: var(--color-bg);
+  }
+  .log-row .body.hot .dot { left: -4.5px; width: 8px; height: 8px; border: 0; background: var(--color-accent); }
+  .log-row .main { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; font-size: 13.5px; }
+  .log-row .sub { font-size: 12px; margin-top: 4px; line-height: 1.6; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .q-bar {
+    flex: 1; height: 5px;
+    background: repeating-linear-gradient(45deg, var(--color-neutral-300) 0 4px, transparent 4px 8px);
+  }
+  .q-head { display: flex; align-items: center; gap: 9px; }
+  #event-list[data-quiet="on"] .q-bar { display: none; }
+  #event-list[data-quiet="off"] .q-text { display: none; }
+
+  /* side cards: entry watch / managed / eng */
+  .watch-block { border-top: 1px solid var(--color-divider); padding-top: 13px; margin-top: 14px; }
+  .watch-block.active-sym { box-shadow: inset 3px 0 0 var(--color-accent); padding-left: 11px; margin-left: -11px; }
+  .watch-head { display: flex; align-items: baseline; gap: 8px; }
+  .watch-head .sym { font-family: var(--font-heading); font-size: 15px; }
+  /* E16b: entry-watch rail, relaid after user feedback -- prices sit ABOVE
+     the track, the distance label sits BELOW it under the marker, nothing
+     overlaps the track itself. */
+  .rail-wrap { margin: 10px 0 2px; }
+  .rail-ends { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 4px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .rail-track { position: relative; height: 10px; background: var(--color-accent-100); border: 1px solid var(--color-divider); }
+  .rail-track .mid { position: absolute; left: 50%; top: 1px; bottom: 1px; width: 1px; background: var(--color-divider); }
+  .rail-track .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--color-text); }
+  .rail-dist { position: relative; height: 15px; margin-top: 4px; font-size: 10px; }
+  .rail-dist span { position: absolute; white-space: nowrap; color: var(--color-accent-800); font-weight: 600; }
+  .gauge-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .gauge-row .lbl { font-size: 10.5px; width: 64px; flex: none; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .gauge-row .val { font-size: 10.5px; width: 84px; flex: none; text-align: right; }
+  .gauge { flex: 1; height: 10px; border: 1px solid var(--color-divider); position: relative; }
+  .gauge .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--color-neutral-500); opacity: .45; }
+  .gauge.hot .fill { background: var(--color-accent); opacity: .9; }
+  .gauge .tick { position: absolute; left: 20%; top: -3px; bottom: -3px; width: 1px; background: var(--color-accent); }
+  .ranks-note { font-size: 10.5px; margin-top: 6px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+
+  .rule-row { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; }
+  .rule-row + .rule-row { border-top: 1px solid var(--color-divider); padding-top: 10px; margin-top: 10px; }
+  .rule-row .name { font-size: 13px; }
+  .rule-row .desc { font-size: 11px; line-height: 1.55; color: color-mix(in srgb, var(--color-text) 55%, transparent); grid-column: 2; }
+  .managed-sym-head { display: flex; align-items: baseline; gap: 8px; border-top: 1px solid var(--color-divider); padding-top: 11px; margin-top: 12px; }
+  .managed-sym-head .sym { font-family: var(--font-heading); font-size: 15px; }
+
+  #engineering-view { display: none; margin-top: 12px; border-top: 1px solid var(--color-divider); padding-top: 11px; }
+  #engineering-view.show { display: block; }
+  .engineering-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+
+  /* rationale card */
+  .rationale { display: flex; flex-direction: column; gap: 12px; }
+  .rationale .k { font-size: 10.5px; letter-spacing: .08em; color: color-mix(in srgb, var(--color-text) 55%, transparent); margin-bottom: 5px; }
+  .rationale .v { font-size: 12px; line-height: 1.7; }
+
+  @media (max-width: 1100px) {
+    .two-col { grid-template-columns: 1fr; }
+    #clock-grid, #acct-grid { grid-template-columns: 1fr 1fr !important; }
+    #clock-grid .cell:nth-child(3), #acct-grid .cell:nth-child(3) { border-left: 0; }
+    #clock-grid .cell, #acct-grid .cell { border-top: 1px solid var(--color-divider); }
+  }
+  @media (max-width: 640px) {
+    #clock-grid, #acct-grid { grid-template-columns: 1fr !important; }
+    #clock-grid .cell + .cell, #acct-grid .cell + .cell { border-left: 0; }
+    main { padding: 12px 10px 40px; }
+    .log-row { grid-template-columns: 74px 1fr; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<main>
+
+<div id="banner">
+  <div class="stripe"></div>
+  <div class="body">
+    <div class="head">
+      <span class="mode">工程驗證模式</span>
+      <span class="line">squeeze 佔位規則已知無邊際（D-008），模擬損益不作策略論證（D-013）</span>
+    </div>
+    <div class="sub text-muted"><span id="banner-cost"></span>　｜　待辦：待實際費率替換（CAL-002 佔位值）　｜　唯讀看板，無下單與參數修改路徑</div>
+  </div>
+</div>
+
+<div class="blueprint" id="board"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+  <div id="board-head">
+    <div class="title">
+      <span class="name">交易儀表板</span>
+      <span class="tag tag-outline">PAPER · 127.0.0.1:8787</span>
+    </div>
+    <div class="seg" id="tabs"></div>
+    <div id="board-right">
+      <span id="sys-health"><span class="led"></span><span class="txt">—</span></span>
+      <span id="last-updated"></span>
+      <button class="btn" id="refresh-btn">重新整理</button>
+      <button class="btn btn-ghost" id="theme-btn">切換配色</button>
+    </div>
+  </div>
+
+  <div id="clock-grid">
+    <div class="cell">
+      <div class="lbl">部署起點（紙上帳）</div>
+      <div class="big" id="clock-epoch">—</div>
+    </div>
+    <div class="cell">
+      <div class="lbl">最新規則棒（4H 收盤）</div>
+      <div class="big" id="clock-rulebar">—</div>
+      <div class="note" id="clock-checked">—</div>
+    </div>
+    <div class="cell">
+      <div class="lbl" id="clock-forming-lbl">成形中的棒</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:7px">
+        <div id="forming-track"><span id="forming-fill" style="flex:0"></span><span id="forming-rest" style="flex:100"></span></div>
+        <span class="hfont" id="forming-pct" style="font-size:14px">—</span>
+      </div>
+      <div class="note" id="clock-now">只有 K 線圖是即時的</div>
+    </div>
+    <div class="cell">
+      <div class="lbl">下次檢查</div>
+      <div class="big" id="clock-next">—</div>
+      <div class="note">排程：每 4 小時整點後 :05 · 時間皆為 UTC</div>
+    </div>
+  </div>
+
+  <div id="acct-grid"></div>
+  <div id="acct-status"></div>
+  <div id="acct-expand-host"></div>
+</div>
+
+<div class="two-col">
+  <div class="col-stack">
+
+    <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div id="chart-head">
+        <span class="sym"><span id="pl-symbol">—</span> 價格與規則軌道</span>
+        <span class="px" id="pl-price">—</span>
+        <span id="live-status" class="live-status poll">輪詢備援</span>
+        <div class="seg" id="tf-buttons" style="margin-left:auto">
+          <button class="seg-opt tf-btn" data-tf="15m">15M</button>
+          <button class="seg-opt tf-btn" data-tf="1h">1H</button>
+          <button class="seg-opt tf-btn active" data-tf="4h">4H</button>
+          <button class="seg-opt tf-btn" data-tf="1d">1D</button>
+        </div>
+        <button class="btn" id="follow-btn">跟隨最新</button>
+      </div>
+      <div id="rule-info"></div>
+      <div id="draw-toolbar">
+        <button class="draw-btn active" data-tool="cursor" title="游標">
+          <svg viewBox="0 0 16 18" width="14" height="14"><path
+            d="M4 1 L4 14.5 L7.6 11.4 L9.8 16.6 L12 15.7 L9.8 10.6 L14.4 10.6 Z" fill="currentColor"/></svg>
+        </button>
+        <button class="draw-btn" data-tool="trend" title="趨勢線">╱</button>
+        <button class="draw-btn" data-tool="hline" title="水平線">─</button>
+        <button class="draw-btn" data-tool="fib" title="斐波那契">𝑭</button>
+        <button class="draw-btn" data-tool="free" title="手繪">✎</button>
+        <button class="draw-btn" id="draw-clear-btn" title="清除全部（本商品）">✕</button>
+      </div>
+
+      <div id="chart-stage">
+        <canvas id="main-canvas"></canvas>
+        <div id="chart-message"></div>
+      </div>
+
+      <div id="ind-row">
+        <span class="grp">疊圖</span>
+        <button class="chip ind-btn" data-ind="bb"><span class="led"></span>布林通道</button>
+        <button class="chip ind-btn" data-ind="ema"><span class="led"></span>EMA 7 / 25 / 99</button>
+        <span class="grp" style="margin-left:10px">副圖</span>
+        <button class="chip ind-btn" data-ind="vol"><span class="led"></span>VOL</button>
+        <button class="chip ind-btn" data-ind="rsi"><span class="led"></span>RSI</button>
+        <button class="chip ind-btn" data-ind="macd"><span class="led"></span>MACD</button>
+        <button class="chip ind-btn" data-ind="kdj"><span class="led"></span>KDJ</button>
+        <span class="text-muted" style="margin-left:auto;font-size:11px">長亮＝開啟 · 長暗＝關閉</span>
+      </div>
+      <div id="panes-container">
+        <div class="pane-block" data-pane="vol">
+          <div class="pane-resizer"></div>
+          <canvas class="pane-canvas"></canvas>
+        </div>
+        <div class="pane-block" data-pane="rsi" style="display:none">
+          <div class="pane-resizer"></div>
+          <canvas class="pane-canvas"></canvas>
+        </div>
+        <div class="pane-block" data-pane="macd" style="display:none">
+          <div class="pane-resizer"></div>
+          <canvas class="pane-canvas"></canvas>
+        </div>
+        <div class="pane-block" data-pane="kdj" style="display:none">
+          <div class="pane-resizer"></div>
+          <canvas class="pane-canvas"></canvas>
+        </div>
+      </div>
+      <p class="foot-note">15M / 1H 為顯示用即時行情；畫線與副圖指標皆為顯示輔助——規則判斷只用布林通道（進場）＋ATR 追蹤停損（出場），且一律以 4H 收盤棒為準。布林軌道：4H 圖取規則棒的實際數值；15M / 1H / 1D 為前端以同參數（20, 2σ）試算的顯示輔助，不參與規則判斷。</p>
+    </div>
+
+    <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="card-title" style="margin-bottom:11px">
+        <span class="t">成交紀錄 · <span id="trades-sym">—</span></span>
+        <span class="s" id="trades-summary"></span>
+        <span class="tag tag-neutral" style="margin-left:auto">全期 2026-08-01 起</span>
+      </div>
+      <div class="table-wrap"><table id="trades-table">
+        <thead><tr>
+          <th>進場時間</th><th>出場時間</th><th>方向</th><th class="num">數量</th>
+          <th class="num">進場價</th><th class="num">出場價</th><th class="num">手續費</th>
+          <th class="num">資金費用</th><th class="num">損益</th><th>原因</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+
+    <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="card-title" style="margin-bottom:14px">
+        <span class="t">策略日誌 · <span id="events-sym">—</span></span>
+        <span class="s">只列有動作的棒，靜默棒壓縮成統計行</span>
+        <button class="btn btn-ghost" id="quiet-btn" style="margin-left:auto;font-size:12px">靜默行：展開／收合</button>
+      </div>
+      <div id="event-list" data-quiet="on"></div>
+      <p class="foot-note" style="padding:10px 0 0;margin-top:6px">本規則僅使用：布林通道（進場）＋ATR 追蹤停損（出場），無其他指標。</p>
+    </div>
+
+  </div>
+
+  <div class="col-stack">
+
+    <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="card-title">
+        <span class="t">進場監視</span>
+        <span class="s">離進場條件多遠</span>
+        <span class="tag tag-outline" id="trigger-overall" style="margin-left:auto">—</span>
+      </div>
+      <p class="text-muted" style="font-size:11.5px;margin:3px 0 2px;line-height:1.6">兩條件要在同一根 4H 收盤棒同時成立：擠壓閘門開（前 5 棒寬度排名最低值 &lt; 20）＋收盤突破軌道。</p>
+      <div id="trigger-rows"></div>
+      <p class="foot-note" style="padding:9px 0 0;margin-top:13px">距離以最新收盤棒估算，下一棒軌道會略有變動。</p>
+    </div>
+
+    <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="card-title" style="margin-bottom:10px">
+        <span class="t">機器人代管中</span>
+        <span class="s">自動出場規則狀態</span>
+      </div>
+      <div id="managed-rows"></div>
+      <p class="foot-note" style="padding:9px 0 0;margin-top:13px">「棒」＝ 4 小時。此看板為唯讀，配置只能由部署批次變更。</p>
+    </div>
+
+    <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="card-title">
+        <span class="t">工程檢視</span>
+        <button class="btn" id="engineering-toggle" style="margin-left:auto;font-size:12px">原始 12 欄表</button>
+      </div>
+      <div class="text-muted" style="font-size:11px;margin:10px 0 7px" id="eng-mini-lbl">最新規則棒 · 三商品</div>
+      <div class="table-wrap"><table id="eng-mini">
+        <thead><tr><th>商品</th><th class="num">收盤</th><th class="num">上軌</th><th class="num">下軌</th><th class="num">排名</th><th>擠壓</th><th>動作</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div id="engineering-view">
+        <div class="engineering-toolbar">
+          <label><input type="checkbox" id="only-action"> 只看有動作的棒</label>
+          <span>預設顯示最近 200 根（檢視中商品）</span>
+        </div>
+        <div class="table-wrap scrolly"><table id="signals-table">
+          <thead><tr>
+            <th>時間</th><th>收盤</th><th>上軌</th><th>下軌</th><th>寬度排名</th>
+            <th>擠壓</th><th>多訊號</th><th>空訊號</th><th>部位</th>
+            <th>停損</th><th>動作</th><th>原因</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="rationale">
+        <div><div class="k">重新設計時的取捨</div>
+        <div class="v">唯讀看板：全站沒有下單、錢包、參數面板；所有可點的東西只改變「看什麼」，不改變系統狀態。四小時的更新節奏做成頂部的棒時鐘，而不是一行小字。</div></div>
+        <div><div class="k">單色下的方向表示</div>
+        <div class="v">整站只有一個鋼藍重點色，漲跌用空心／實心 K 棒與正負號表示，不靠紅綠；EMA 三線以實線／虛線／點線區分。紅色僅保留給頂部的工程驗證聲明，屬於功能性警示。</div></div>
+        <div><div class="k">只吃現有 API</div>
+        <div class="v">畫面上每個數字都來自 /api/summary、/api/trades、/api/events、/api/signals 現有欄位；指標讀值沿用前端既有計算，沒有新增後端需求。</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</main>
+
+<script>
+// E17 (open-source template): the symbol list, starting cash and totals all
+// come from /api/summary (which reads config.json) -- nothing hardcoded here.
+let SYMBOLS = [];
+let CASH0 = 10000;
+let TOTAL0 = 30000;
+let activeSymbol = null;
+let priceTf = "4h";
+let lastSummary = null;
+let tradesBySymbol = {};
+let eventsBySymbol = {};
+let equityBySymbol = {};
+let signalRowsBySymbol = {};   // E16: rule-bar rows cache (BB overlay on the 4h chart)
+let expandedAcctSymbol = null;
+let acctBalanceChart = null;
+
+function fmtTsShort(ms) {
+  if (ms === null || ms === undefined) return "-";
+  const d = new Date(ms);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+function fmtHm(ms) {
+  const d = new Date(ms);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+function fmtTsFull(ms) {
+  if (ms === null || ms === undefined) return "-";
+  return new Date(ms).toISOString().slice(0, 16).replace("T", " ") + "Z";
+}
+function fmtNum(x, digits) {
+  if (x === null || x === undefined) return "-";
+  return Number(x).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+function fmtSigned(x, digits) {
+  if (x === null || x === undefined) return "-";
+  const n = Number(x);
+  const sign = n >= 0 ? "+" : "−";
+  return sign + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+function fmtOrDash(v) { return (v === null || v === undefined) ? "-" : v.toFixed(2); }
+function fmtVolume(v) {
+  if (v === null || v === undefined) return "-";
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + "K";
+  return v.toFixed(2);
+}
+function boolCell(v) { return v ? "✓" : '<span class="text-muted">·</span>'; }
+function dirWord(dir) { return dir === "long" ? "多" : "空"; }
+function shortReason(raw) {
+  if (raw === "stop") return "追蹤停損";
+  if (raw === "stall") return "停滯出場";
+  if (raw === "reversal") return "反手";
+  if (raw === "window_end") return "窗末平倉";
+  return raw || "-";
+}
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + " -> " + r.status);
+  return r.json();
+}
+
+// E16: canvas colors always read the live CSS tokens, so the light/dark
+// toggle recolors every canvas on the next render with no duplicated palette.
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name) => cs.getPropertyValue(name).trim();
+  const ink = v("--color-text");
+  return {
+    ink,
+    bg: v("--color-bg"),
+    divider: v("--color-divider"),
+    accent: v("--color-accent"),
+    accent700: v("--color-accent-700"),
+    accent800: v("--color-accent-800"),
+    muted: v("--color-neutral-500"),
+    warn: v("--color-warn"),
+  };
+}
+
+// ---------- summary / banner ----------
+
+function buildTabs() {
+  const wrap = document.getElementById("tabs");
+  wrap.innerHTML = "";
+  for (const symbol of SYMBOLS) {
+    const btn = document.createElement("button");
+    btn.className = "seg-opt tab-btn" + (symbol === activeSymbol ? " active" : "");
+    btn.dataset.symbol = symbol;
+    btn.textContent = symbol;
+    btn.addEventListener("click", () => loadSymbolTab(symbol));
+    wrap.appendChild(btn);
+  }
+}
+
+async function loadSummary() {
+  const s = await getJSON("/api/summary");
+  lastSummary = s;
+
+  const symbols = Object.keys(s.symbols || {});
+  const changed = symbols.join("|") !== SYMBOLS.join("|");
+  SYMBOLS = symbols;
+  if (s.cash0) CASH0 = s.cash0;
+  TOTAL0 = CASH0 * (SYMBOLS.length || 1);
+  if (!activeSymbol || !SYMBOLS.includes(activeSymbol)) activeSymbol = SYMBOLS[0] || null;
+  if (changed) buildTabs();
+
+  document.getElementById("banner-cost").textContent = s.cost_note;
+
+  const healthEl = document.getElementById("sys-health");
+  healthEl.classList.toggle("fail", !s.health.ok);
+  healthEl.querySelector(".txt").textContent = s.health.ok
+    ? `${SYMBOLS.length} 商品資料流正常` : "資料流異常";
+}
+
+// ==================================================================
+// E12: live candle chart -- canvas engine (zoom/pan/draw/indicators)
+// ==================================================================
+
+const TF_MS = { "15m": 15 * 60 * 1000, "1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000, "1d": 24 * 60 * 60 * 1000 };
+const STEP_MS = TF_MS["4h"];
+const MAX_BARS = 220;
+const WS_RECONNECT_MIN_MS = 3000;
+const WS_RECONNECT_MAX_MS = 30000;
+const RENDER_MIN_INTERVAL_MS = 100; // rAF-throttled to ~10 redraws/sec
+const EMA_PERIODS = [7, 25, 99];
+// E16 single-accent policy: the three EMAs are one ink color told apart by
+// line style (solid / dashed / dotted), matching the redesign's rationale.
+const EMA_DASHES = { 7: [], 25: [6, 4], 99: [1, 4] };
+const PRICE_AXIS_W = 74;
+const MIN_VISIBLE_BARS = 12;
+
+let chart = { symbol: null, tf: null, histBars: [], currentBar: null };
+
+let view = { i0: 0, i1: 120, pMin: 0, pMax: 1, follow: true, auto: true };
+
+let mainGeom = null;
+let mainCanvasState = { cw: 0, ch: 0, dpr: 0 };
+let paneCanvasStates = { vol: { cw: 0, ch: 0, dpr: 0 }, rsi: { cw: 0, ch: 0, dpr: 0 },
+  macd: { cw: 0, ch: 0, dpr: 0 }, kdj: { cw: 0, ch: 0, dpr: 0 } };
+
+let ws = null;
+let wsShouldReconnect = false;
+let wsReconnectDelay = WS_RECONNECT_MIN_MS;
+let wsReconnectTimer = null;
+let pollTimer = null;
+let liveStatus = "poll"; // "live" | "reconnecting" | "poll"
+
+// ---- drawing tools state ----
+let activeTool = "cursor"; // cursor|trend|hline|fib|free
+let drawPending = null;    // {type, p1:{ts,price}}
+let freehandPoints = null;
+let freehandRawCount = 0;
+let mousePos = null;
+let panState = null;
+
+// ---- persistence ----
+const DRAW_STORAGE_KEY = "paperlab_drawings_v1";
+const UI_STORAGE_KEY = "paperlab_ui_v1";
+let drawings = {};
+let uiSettings = {
+  indicators: { bb: true, vol: true, ema: true, rsi: false, macd: false, kdj: false },
+  paneHeights: { vol: 90, rsi: 90, macd: 110, kdj: 110 },
+  theme: "light",
+  quietOpen: true,
+};
+
+function loadDrawings() {
+  try {
+    const raw = localStorage.getItem(DRAW_STORAGE_KEY);
+    drawings = raw ? JSON.parse(raw) : {};
+  } catch (e) { drawings = {}; }
+}
+function saveDrawings() {
+  try { localStorage.setItem(DRAW_STORAGE_KEY, JSON.stringify(drawings)); } catch (e) {}
+}
+function drawingsFor(symbol) {
+  if (!drawings[symbol]) drawings[symbol] = { trend: [], hline: [], fib: [], free: [] };
+  return drawings[symbol];
+}
+function loadUiSettings() {
+  try {
+    const raw = localStorage.getItem(UI_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      Object.assign(uiSettings.indicators, parsed.indicators || {});
+      Object.assign(uiSettings.paneHeights, parsed.paneHeights || {});
+      if (parsed.theme === "dark" || parsed.theme === "light") uiSettings.theme = parsed.theme;
+      if (typeof parsed.quietOpen === "boolean") uiSettings.quietOpen = parsed.quietOpen;
+    }
+  } catch (e) {}
+}
+function saveUiSettings() {
+  try { localStorage.setItem(UI_STORAGE_KEY, JSON.stringify(uiSettings)); } catch (e) {}
+}
+
+// ---- data helpers ----
+
+function allBars() {
+  return chart.currentBar ? [...chart.histBars, chart.currentBar] : chart.histBars;
+}
+function totalBarCount() { return allBars().length; }
+function barIntervalMs() { return TF_MS[chart.tf] || TF_MS["4h"]; }
+function tsToIndex(ts) {
+  const bars = allBars();
+  if (!bars.length) return 0;
+  return (ts - bars[0].ts) / barIntervalMs();
+}
+function indexToTs(i) {
+  const bars = allBars();
+  if (!bars.length) return Date.now();
+  return bars[0].ts + i * barIntervalMs();
+}
+
+function computeEmaSeries(bars, period) {
+  if (bars.length < period) return bars.map(() => null);
+  const k = 2 / (period + 1);
+  const out = new Array(bars.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += bars[i].close;
+  let prev = sum / period;
+  out[period - 1] = prev;
+  for (let i = period; i < bars.length; i++) {
+    prev = bars[i].close * k + prev * (1 - k);
+    out[i] = prev;
+  }
+  return out;
+}
+
+function computeRsi(bars, period) {
+  const out = new Array(bars.length).fill(null);
+  if (bars.length < period + 1) return out;
+  let gainSum = 0, lossSum = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = bars[i].close - bars[i - 1].close;
+    if (diff > 0) gainSum += diff; else lossSum -= diff;
+  }
+  let avgGain = gainSum / period, avgLoss = lossSum / period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < bars.length; i++) {
+    const diff = bars[i].close - bars[i - 1].close;
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+
+function computeMacd(bars) {
+  const ema12 = computeEmaSeries(bars, 12);
+  const ema26 = computeEmaSeries(bars, 26);
+  const dif = bars.map((_, i) => (ema12[i] !== null && ema26[i] !== null) ? ema12[i] - ema26[i] : null);
+  const dea = new Array(bars.length).fill(null);
+  const k = 2 / (9 + 1);
+  let prev = null;
+  const seedBuf = [];
+  for (let i = 0; i < bars.length; i++) {
+    if (dif[i] === null) continue;
+    if (prev === null) {
+      seedBuf.push(dif[i]);
+      if (seedBuf.length === 9) {
+        prev = seedBuf.reduce((a, b) => a + b, 0) / 9;
+        dea[i] = prev;
+      }
+    } else {
+      prev = dif[i] * k + prev * (1 - k);
+      dea[i] = prev;
+    }
+  }
+  const hist = bars.map((_, i) => (dif[i] !== null && dea[i] !== null) ? dif[i] - dea[i] : null);
+  return { dif, dea, hist };
+}
+
+function computeKdj(bars, n, m1, m2) {
+  const k = new Array(bars.length).fill(null);
+  const d = new Array(bars.length).fill(null);
+  const j = new Array(bars.length).fill(null);
+  let prevK = 50, prevD = 50;
+  for (let i = 0; i < bars.length; i++) {
+    if (i < n - 1) continue;
+    let hh = -Infinity, ll = Infinity;
+    for (let x = i - n + 1; x <= i; x++) { hh = Math.max(hh, bars[x].high); ll = Math.min(ll, bars[x].low); }
+    const rsv = (hh === ll) ? 50 : (bars[i].close - ll) / (hh - ll) * 100;
+    const kk = (prevK * (m1 - 1) + rsv) / m1;
+    const dd = (prevD * (m2 - 1) + kk) / m2;
+    k[i] = kk; d[i] = dd; j[i] = 3 * kk - 2 * dd;
+    prevK = kk; prevD = dd;
+  }
+  return { k, d, j };
+}
+
+function computeVolMa(bars, period) {
+  const out = new Array(bars.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < bars.length; i++) {
+    sum += bars[i].volume || 0;
+    if (i >= period) sum -= bars[i - period].volume || 0;
+    if (i >= period - 1) out[i] = sum / period;
+  }
+  return out;
+}
+
+// E16c: client-side Bollinger for the non-rule timeframes (display aid only,
+// never a rule value). Population stdev, matching Pine's ta.stdev default --
+// same (20, 2sigma) parameters as the rule.
+function computeBollinger(bars, len, mult) {
+  const upper = new Array(bars.length).fill(null);
+  const lower = new Array(bars.length).fill(null);
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < bars.length; i++) {
+    const c = bars[i].close;
+    sum += c; sumSq += c * c;
+    if (i >= len) { const o = bars[i - len].close; sum -= o; sumSq -= o * o; }
+    if (i >= len - 1) {
+      const mean = sum / len;
+      const sd = Math.sqrt(Math.max(0, sumSq / len - mean * mean));
+      upper[i] = mean + mult * sd;
+      lower[i] = mean - mult * sd;
+    }
+  }
+  return { upper, lower };
+}
+
+// ---- viewport ----
+
+function setFollow(val) {
+  view.follow = val;
+  const btn = document.getElementById("follow-btn");
+  if (btn) btn.classList.toggle("active", val);
+  if (btn) btn.style.borderColor = val ? "var(--color-accent)" : "";
+  if (btn) btn.style.color = val ? "var(--color-accent-800)" : "";
+}
+
+function clampView() {
+  const total = totalBarCount();
+  if (total === 0) return;
+  let w = view.i1 - view.i0;
+  w = Math.max(MIN_VISIBLE_BARS, Math.min(w, total * 1.4));
+  if (view.follow) {
+    view.i1 = total;
+    view.i0 = view.i1 - w;
+  } else {
+    if (view.i0 < -w * 0.5) { view.i0 = -w * 0.5; view.i1 = view.i0 + w; }
+    if (view.i1 > total + w * 0.5) { view.i1 = total + w * 0.5; view.i0 = view.i1 - w; }
+  }
+}
+
+function resetView() {
+  const total = totalBarCount();
+  view.i1 = total;
+  view.i0 = Math.max(0, total - 120);
+  setFollow(true);
+  view.auto = true;
+}
+
+function autoFitY() {
+  const bars = allBars();
+  const lo = Math.max(0, Math.floor(view.i0));
+  const hi = Math.min(bars.length, Math.ceil(view.i1));
+  const visible = bars.slice(lo, hi);
+  if (!visible.length) { view.pMin = 0; view.pMax = 1; return; }
+  const loP = Math.min(...visible.map(b => b.low));
+  const hiP = Math.max(...visible.map(b => b.high));
+  const pad = (hiP - loP) * 0.08 || hiP * 0.01 || 1;
+  view.pMin = loP - pad;
+  view.pMax = hiP + pad;
+}
+
+// ---- canvas + coordinate mapping ----
+
+function ensureCanvasSize(canvas, state, fallbackH) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const cw = Math.max(1, Math.round(rect.width));
+  // clientHeight can legitimately read 0 (layout not settled yet, or a flex
+  // sizing hiccup) -- fall back to a sane per-pane default rather than
+  // feeding a 0/garbage height into the canvas attribute.
+  let ch = Math.round(rect.height);
+  if (ch <= 0) ch = fallbackH || 150;
+  if (state.cw !== cw || state.ch !== ch || state.dpr !== dpr) {
+    canvas.width = cw * dpr;
+    canvas.height = ch * dpr;
+    canvas.style.height = ch + "px";
+    state.cw = cw; state.ch = ch; state.dpr = dpr;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function xForGeom(geom, i) {
+  const left = geom.leftGutter, right = geom.cw - geom.rightPad;
+  return left + (i - view.i0) / (view.i1 - view.i0) * (right - left);
+}
+function yForGeom(geom, price, pMin, pMax) {
+  const top = geom.topPad, bottom = geom.ch - geom.bottomPad;
+  return top + (pMax - price) / (pMax - pMin) * (bottom - top);
+}
+function mainUsable() {
+  const g = mainGeom;
+  return { left: g.leftGutter, right: g.cw - g.rightPad, top: g.topPad, bottom: g.ch - g.bottomPad };
+}
+function invXMain(px) {
+  const u = mainUsable();
+  return view.i0 + (px - u.left) / (u.right - u.left) * (view.i1 - view.i0);
+}
+function invYMain(py) {
+  const u = mainUsable();
+  return view.pMax - (py - u.top) / (u.bottom - u.top) * (view.pMax - view.pMin);
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ---- main chart rendering ----
+
+function showChartMessage(text) {
+  const el = document.getElementById("chart-message");
+  el.textContent = text; el.style.display = "flex";
+}
+function hideChartMessage() {
+  document.getElementById("chart-message").style.display = "none";
+}
+
+function renderMainChart() {
+  const canvas = document.getElementById("main-canvas");
+  const ctx = ensureCanvasSize(canvas, mainCanvasState, 260);
+  mainGeom = { cw: mainCanvasState.cw, ch: mainCanvasState.ch,
+    leftGutter: 4, rightPad: PRICE_AXIS_W, topPad: 8, bottomPad: 16 };
+  const g = mainGeom;
+  ctx.clearRect(0, 0, g.cw, g.ch);
+
+  const bars = allBars();
+  if (!bars.length) {
+    document.getElementById("pl-price").textContent = "-";
+    return;
+  }
+  clampView();
+  if (view.auto) autoFitY();
+  if (view.pMax <= view.pMin) view.pMax = view.pMin + 1;
+
+  const th = themeColors();
+  drawGridMain(ctx, bars, th);
+  if (uiSettings.indicators.bb) drawBandsMain(ctx, bars, th);
+  drawCandlesMain(ctx, bars, th);
+  if (uiSettings.indicators.ema) drawEmaMain(ctx, bars, th);
+  drawDrawingsMain(ctx, bars, th);
+  drawLatestPriceMain(ctx, bars, th);
+
+  document.getElementById("pl-price").textContent = fmtNum(bars[bars.length - 1].close, 2);
+}
+
+function drawGridMain(ctx, bars, th) {
+  const g = mainGeom;
+  const u = mainUsable();
+  ctx.strokeStyle = th.divider; ctx.lineWidth = 1;
+  ctx.fillStyle = th.muted; ctx.font = "10px sans-serif"; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  const levels = 6;
+  for (let i = 0; i <= levels; i++) {
+    const price = view.pMin + (view.pMax - view.pMin) * (i / levels);
+    const yy = yForGeom(g, price, view.pMin, view.pMax);
+    ctx.beginPath(); ctx.moveTo(u.left, yy); ctx.lineTo(u.right, yy); ctx.stroke();
+    ctx.fillText(Number(price).toLocaleString(undefined, { maximumFractionDigits: 2 }), u.right + 2, yy);
+  }
+  const pxPerBar = (u.right - u.left) / (view.i1 - view.i0);
+  const stepBars = Math.max(1, Math.round(70 / pxPerBar));
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  const i0 = Math.max(0, Math.floor(view.i0));
+  const i1 = Math.min(bars.length - 1, Math.ceil(view.i1));
+  const start = Math.ceil(i0 / stepBars) * stepBars;
+  for (let i = start; i <= i1; i += stepBars) {
+    if (!bars[i]) continue;
+    const xx = xForGeom(g, i + 0.5);
+    if (xx < u.left || xx > u.right) continue;
+    ctx.fillText(fmtTsShort(bars[i].ts), xx, u.bottom + 12);
+  }
+}
+
+// E16: Bollinger bands on every timeframe (user request). On 4H the values
+// are the exact per-bar upper/lower stored in paper_signals (/api/signals)
+// -- the rule's own numbers, no client reimplementation. On 15M/1H/1D there
+// are no rule bars, so the bands are client-computed with the same (20, 2σ)
+// parameters and labeled as a display aid. Mid line = (upper+lower)/2.
+function drawBandsMain(ctx, bars, th) {
+  const ruleMode = chart.tf === "4h";
+  const g = mainGeom;
+  const u = mainUsable();
+
+  const pts = [];
+  if (ruleMode) {
+    const rows = signalRowsBySymbol[chart.symbol];
+    if (!rows || !rows.length) return;
+    const byTs = {};
+    for (const r of rows) if (r.upper !== null && r.lower !== null) byTs[r.ts] = r;
+    for (let i = 0; i < bars.length; i++) {
+      const r = byTs[bars[i].ts];
+      if (r) pts.push({ i, upper: r.upper, lower: r.lower });
+    }
+  } else {
+    const bb = computeBollinger(bars, 20, 2.0);
+    for (let i = 0; i < bars.length; i++) {
+      if (bb.upper[i] !== null) pts.push({ i, upper: bb.upper[i], lower: bb.lower[i] });
+    }
+  }
+  if (pts.length < 2) return;
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(u.left, u.top, u.right - u.left, u.bottom - u.top); ctx.clip();
+
+  // soft fill between the bands
+  ctx.beginPath();
+  pts.forEach((p, idx) => {
+    const xx = xForGeom(g, p.i + 0.5), yy = yForGeom(g, p.upper, view.pMin, view.pMax);
+    if (idx === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+  });
+  for (let idx = pts.length - 1; idx >= 0; idx--) {
+    const p = pts[idx];
+    ctx.lineTo(xForGeom(g, p.i + 0.5), yForGeom(g, p.lower, view.pMin, view.pMax));
+  }
+  ctx.closePath();
+  ctx.globalAlpha = 0.08; ctx.fillStyle = th.accent; ctx.fill(); ctx.globalAlpha = 1;
+
+  const plot = (key, dash) => {
+    ctx.strokeStyle = th.accent; ctx.lineWidth = 1.4; ctx.setLineDash(dash);
+    ctx.beginPath();
+    pts.forEach((p, idx) => {
+      const v = key === "mid" ? (p.upper + p.lower) / 2 : p[key];
+      const xx = xForGeom(g, p.i + 0.5), yy = yForGeom(g, v, view.pMin, view.pMax);
+      if (idx === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  plot("upper", []);
+  plot("lower", []);
+  plot("mid", [5, 4]);
+
+  const last = pts[pts.length - 1];
+  ctx.font = "10px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillStyle = th.accent800;
+  const upLbl = ruleMode ? `上軌 ${fmtNum(last.upper, 2)}（做多觸發）`
+    : `上軌 ${fmtNum(last.upper, 2)}`;
+  const dnLbl = ruleMode ? `下軌 ${fmtNum(last.lower, 2)}（做空觸發）`
+    : `下軌 ${fmtNum(last.lower, 2)} · BB(20, 2σ) 顯示輔助`;
+  ctx.fillText(upLbl, u.left + 8,
+    Math.max(u.top + 8, yForGeom(g, last.upper, view.pMin, view.pMax) - 8));
+  ctx.fillText(dnLbl, u.left + 8,
+    Math.min(u.bottom - 8, yForGeom(g, last.lower, view.pMin, view.pMax) + 10));
+
+  // boundary between checked rule bars and the forming bar (rule mode only)
+  if (ruleMode && chart.currentBar) {
+    const bx = xForGeom(g, tsToIndex(chart.currentBar.ts));
+    if (bx > u.left && bx < u.right) {
+      ctx.strokeStyle = th.accent; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(bx, u.top); ctx.lineTo(bx, u.bottom); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = th.accent800; ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("已檢查 ←｜→ 成形中", bx - 4, u.top + 10);
+    }
+  }
+  ctx.restore();
+}
+
+// E16 single-accent candles: up = hollow (ink stroke, bg fill), down =
+// solid ink; the still-forming bar is a dashed accent outline.
+function drawCandlesMain(ctx, bars, th) {
+  const g = mainGeom;
+  const u = mainUsable();
+  const pxPerBar = (u.right - u.left) / (view.i1 - view.i0);
+  const candleW = Math.max(1, pxPerBar * 0.65);
+  const i0 = Math.max(0, Math.floor(view.i0) - 1);
+  const i1 = Math.min(bars.length, Math.ceil(view.i1) + 1);
+  for (let i = i0; i < i1; i++) {
+    const b = bars[i];
+    if (!b) continue;
+    const isLive = chart.currentBar && i === bars.length - 1;
+    const up = b.close >= b.open;
+    ctx.globalAlpha = (isLive && liveStatus !== "live") ? 0.55 : 1;
+    const cx = xForGeom(g, i + 0.5);
+    const yh = yForGeom(g, b.high, view.pMin, view.pMax);
+    const yl = yForGeom(g, b.low, view.pMin, view.pMax);
+    const yo = yForGeom(g, b.open, view.pMin, view.pMax);
+    const yc = yForGeom(g, b.close, view.pMin, view.pMax);
+    const bodyTop = Math.min(yo, yc);
+    const bodyH = Math.max(1, Math.abs(yc - yo));
+    const color = isLive ? th.accent : th.ink;
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    if (isLive) ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(cx, yh); ctx.lineTo(cx, yl); ctx.stroke();
+    if (isLive) {
+      ctx.strokeRect(cx - candleW / 2, bodyTop, candleW, bodyH);
+      ctx.setLineDash([]);
+    } else if (up) {
+      ctx.fillStyle = th.bg;
+      ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyH);
+      ctx.strokeRect(cx - candleW / 2, bodyTop, candleW, bodyH);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyH);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawEmaMain(ctx, bars, th) {
+  const g = mainGeom;
+  for (const period of EMA_PERIODS) {
+    const series = computeEmaSeries(bars, period);
+    ctx.strokeStyle = th.muted; ctx.lineWidth = 1.2;
+    ctx.setLineDash(EMA_DASHES[period]);
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < bars.length; i++) {
+      const v = series[i];
+      if (v === null || v === undefined) continue;
+      const xx = xForGeom(g, i + 0.5), yy = yForGeom(g, v, view.pMin, view.pMax);
+      if (!started) { ctx.moveTo(xx, yy); started = true; } else ctx.lineTo(xx, yy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawDrawingsMain(ctx, bars, th) {
+  const g = mainGeom;
+  const u = mainUsable();
+  const d = drawingsFor(chart.symbol);
+
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = th.accent700;
+  for (const t of d.trend) {
+    const x1 = xForGeom(g, tsToIndex(t.p1.ts) + 0.5), y1 = yForGeom(g, t.p1.price, view.pMin, view.pMax);
+    const x2 = xForGeom(g, tsToIndex(t.p2.ts) + 0.5), y2 = yForGeom(g, t.p2.price, view.pMin, view.pMax);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+
+  ctx.font = "10px sans-serif"; ctx.textBaseline = "middle";
+  for (const h of d.hline) {
+    const yy = yForGeom(g, h.price, view.pMin, view.pMax);
+    ctx.strokeStyle = th.accent700; ctx.setLineDash([6, 3]);
+    ctx.beginPath(); ctx.moveTo(u.left, yy); ctx.lineTo(u.right, yy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = th.accent700; ctx.textAlign = "left";
+    ctx.fillText(fmtNum(h.price, 2), u.right + 2, yy);
+  }
+
+  const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  ctx.font = "9.5px sans-serif";
+  for (const f of d.fib) {
+    const xAnchor = xForGeom(g, tsToIndex(f.p1.ts) + 0.5);
+    const p1 = f.p1.price, p2 = f.p2.price;
+    for (const lvl of FIB_LEVELS) {
+      const price = p1 + (p2 - p1) * lvl;
+      const yy = yForGeom(g, price, view.pMin, view.pMax);
+      ctx.strokeStyle = th.accent; ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.moveTo(Math.max(u.left, xAnchor), yy); ctx.lineTo(u.right, yy); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = th.accent700; ctx.textAlign = "left";
+      ctx.fillText(`${lvl.toFixed(3)}  ${fmtNum(price, 2)}`, u.right + 2, yy);
+    }
+  }
+
+  ctx.strokeStyle = th.muted; ctx.lineWidth = 1.3;
+  for (const fr of d.free) {
+    ctx.beginPath();
+    fr.points.forEach((pt, idx) => {
+      const xx = xForGeom(g, tsToIndex(pt.ts) + 0.5), yy = yForGeom(g, pt.price, view.pMin, view.pMax);
+      if (idx === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+    });
+    ctx.stroke();
+  }
+
+  if ((activeTool === "trend" || activeTool === "fib") && drawPending && mousePos) {
+    const x1 = xForGeom(g, tsToIndex(drawPending.p1.ts) + 0.5);
+    const y1 = yForGeom(g, drawPending.p1.price, view.pMin, view.pMax);
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = th.accent700;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(mousePos.x, mousePos.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (activeTool === "free" && freehandPoints && freehandPoints.length) {
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = th.muted;
+    ctx.beginPath();
+    freehandPoints.forEach((pt, idx) => {
+      const xx = xForGeom(g, tsToIndex(pt.ts) + 0.5), yy = yForGeom(g, pt.price, view.pMin, view.pMax);
+      if (idx === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawLatestPriceMain(ctx, bars, th) {
+  const g = mainGeom;
+  const u = mainUsable();
+  const last = bars[bars.length - 1];
+  if (!last) return;
+  const yy = yForGeom(g, last.close, view.pMin, view.pMax);
+  ctx.setLineDash([4, 3]); ctx.strokeStyle = th.accent; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(u.left, yy); ctx.lineTo(u.right, yy); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const label = fmtNum(last.close, 2);
+  ctx.font = "10.5px sans-serif";
+  const textW = ctx.measureText(label).width;
+  const capsuleW = Math.min(textW + 10, g.rightPad - 4);
+  ctx.fillStyle = th.accent;
+  ctx.fillRect(u.right + 2, yy - 7.5, capsuleW, 15);
+  ctx.fillStyle = th.bg; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillText(label, u.right + 6, yy);
+}
+
+// ---- indicator panes ----
+
+function updatePaneVisibility() {
+  ["vol", "rsi", "macd", "kdj"].forEach(name => {
+    const block = document.querySelector(`.pane-block[data-pane="${name}"]`);
+    if (!block) return;
+    block.style.display = uiSettings.indicators[name] ? "flex" : "none";
+    block.style.height = (uiSettings.paneHeights[name] || 90) + "px";
+  });
+}
+
+const PANE_FALLBACK_H = { vol: 60, rsi: 90, macd: 100, kdj: 90 };
+
+function renderPane(name) {
+  const block = document.querySelector(`.pane-block[data-pane="${name}"]`);
+  if (!block || !uiSettings.indicators[name] || block.style.display === "none") return;
+  const canvas = block.querySelector("canvas.pane-canvas");
+  const ctx = ensureCanvasSize(canvas, paneCanvasStates[name], PANE_FALLBACK_H[name]);
+  const cw = paneCanvasStates[name].cw, ch = paneCanvasStates[name].ch;
+  const g = { cw, ch, leftGutter: 4, rightPad: PRICE_AXIS_W, topPad: 6, bottomPad: 4 };
+  ctx.clearRect(0, 0, cw, ch);
+  const bars = allBars();
+  if (!bars.length) return;
+
+  const th = themeColors();
+  if (name === "vol") renderVolPane(ctx, g, bars, th);
+  else if (name === "rsi") renderRsiPane(ctx, g, bars, th);
+  else if (name === "macd") renderMacdPane(ctx, g, bars, th);
+  else if (name === "kdj") renderKdjPane(ctx, g, bars, th);
+}
+
+function renderVolPane(ctx, g, bars, th) {
+  const left = g.leftGutter, right = g.cw - g.rightPad, top = g.topPad, bottom = g.ch - g.bottomPad;
+  const i0 = Math.max(0, Math.floor(view.i0)), i1 = Math.min(bars.length, Math.ceil(view.i1));
+  const visible = bars.slice(i0, i1);
+  const maxVol = Math.max(1e-9, ...visible.map(b => b.volume || 0));
+  const pxPerBar = (right - left) / (view.i1 - view.i0);
+  const barW = Math.max(1, pxPerBar * 0.62);
+  ctx.fillStyle = th.accent; ctx.globalAlpha = 0.34;
+  for (let i = Math.max(0, i0 - 1); i < Math.min(bars.length, i1 + 1); i++) {
+    const b = bars[i];
+    if (!b) continue;
+    const h = (b.volume || 0) / maxVol * (bottom - top);
+    const xx = xForGeom(g, i + 0.5);
+    ctx.fillRect(xx - barW / 2, bottom - h, barW, h);
+  }
+  ctx.globalAlpha = 1;
+
+  const ma = computeVolMa(bars, 5);
+  ctx.strokeStyle = th.muted; ctx.lineWidth = 1;
+  ctx.beginPath(); let started = false;
+  for (let i = 0; i < bars.length; i++) {
+    if (ma[i] === null) continue;
+    const xx = xForGeom(g, i + 0.5);
+    const yy = bottom - Math.min(1, ma[i] / maxVol) * (bottom - top);
+    if (!started) { ctx.moveTo(xx, yy); started = true; } else ctx.lineTo(xx, yy);
+  }
+  ctx.stroke();
+
+  const last = bars[bars.length - 1];
+  const lastMa = ma[ma.length - 1];
+  ctx.fillStyle = th.ink; ctx.font = "10.5px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText(`VOL ${fmtVolume(last.volume)} · MA(5) ${fmtVolume(lastMa)}`, left + 2, top);
+}
+
+function renderRsiPane(ctx, g, bars, th) {
+  const left = g.leftGutter, right = g.cw - g.rightPad, top = g.topPad, bottom = g.ch - g.bottomPad;
+  const series = computeRsi(bars, 14);
+  const pMin = 0, pMax = 100;
+  const y70 = yForGeom(g, 70, pMin, pMax), y30 = yForGeom(g, 30, pMin, pMax);
+  ctx.globalAlpha = 0.07; ctx.fillStyle = th.accent;
+  ctx.fillRect(left, top, right - left, Math.max(0, y70 - top));
+  ctx.fillStyle = th.muted;
+  ctx.fillRect(left, y30, right - left, Math.max(0, bottom - y30));
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = th.divider; ctx.lineWidth = 1;
+  [30, 70].forEach(lvl => {
+    const yy = yForGeom(g, lvl, pMin, pMax);
+    ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(right, yy); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = th.accent700; ctx.lineWidth = g.ch > 150 ? 1.8 : 1.2;
+  ctx.beginPath(); let started = false;
+  for (let i = 0; i < bars.length; i++) {
+    const v = series[i];
+    if (v === null || v === undefined) continue;
+    const xx = xForGeom(g, i + 0.5), yy = yForGeom(g, v, pMin, pMax);
+    if (!started) { ctx.moveTo(xx, yy); started = true; } else ctx.lineTo(xx, yy);
+  }
+  ctx.stroke();
+
+  const lastV = series[series.length - 1];
+  ctx.fillStyle = th.ink; ctx.font = "10.5px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText(`RSI(14) ${fmtOrDash(lastV)} · 70 / 30`, left + 2, top);
+}
+
+function renderMacdPane(ctx, g, bars, th) {
+  const left = g.leftGutter, right = g.cw - g.rightPad, top = g.topPad, bottom = g.ch - g.bottomPad;
+  const mid = (top + bottom) / 2;
+  const halfH = (bottom - top) / 2 - 2;
+  const { dif, dea, hist } = computeMacd(bars);
+
+  const i0 = Math.max(0, Math.floor(view.i0)), i1 = Math.min(bars.length, Math.ceil(view.i1));
+  const visIdx = []; for (let i = i0; i < i1; i++) visIdx.push(i);
+  const histMax = Math.max(1e-9, ...visIdx.map(i => hist[i] !== null ? Math.abs(hist[i]) : 0));
+  const lineMax = Math.max(1e-9, ...visIdx.map(i => Math.max(
+    dif[i] !== null ? Math.abs(dif[i]) : 0, dea[i] !== null ? Math.abs(dea[i]) : 0)));
+
+  ctx.strokeStyle = th.divider; ctx.beginPath(); ctx.moveTo(left, mid); ctx.lineTo(right, mid); ctx.stroke();
+
+  const pxPerBar = (right - left) / (view.i1 - view.i0);
+  const barW = Math.max(1, pxPerBar * 0.62);
+  ctx.fillStyle = th.accent;
+  for (let i = Math.max(0, i0 - 1); i < Math.min(bars.length, i1 + 1); i++) {
+    if (hist[i] === null || hist[i] === undefined) continue;
+    const h = (hist[i] / histMax) * halfH;
+    ctx.globalAlpha = hist[i] >= 0 ? 0.5 : 0.22;
+    const xx = xForGeom(g, i + 0.5);
+    ctx.fillRect(xx - barW / 2, h >= 0 ? mid - h : mid, barW, Math.abs(h));
+  }
+  ctx.globalAlpha = 1;
+
+  const lineWidth = g.ch > 150 ? 1.8 : 1.2;
+  function plotLine(series, color, dash) {
+    ctx.strokeStyle = color; ctx.lineWidth = lineWidth; ctx.setLineDash(dash);
+    ctx.beginPath(); let started = false;
+    for (let i = 0; i < bars.length; i++) {
+      if (series[i] === null || series[i] === undefined) continue;
+      const xx = xForGeom(g, i + 0.5);
+      const yy = mid - (series[i] / lineMax) * halfH;
+      if (!started) { ctx.moveTo(xx, yy); started = true; } else ctx.lineTo(xx, yy);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  plotLine(dif, th.accent700, []);
+  plotLine(dea, th.muted, [5, 3]);
+
+  const lastI = bars.length - 1;
+  ctx.font = "10.5px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillStyle = th.ink;
+  ctx.fillText(`MACD(12,26,9) DIF ${fmtOrDash(dif[lastI])} · DEA ${fmtOrDash(dea[lastI])} · 柱 ${fmtOrDash(hist[lastI])}`, left + 2, top);
+}
+
+function renderKdjPane(ctx, g, bars, th) {
+  const left = g.leftGutter, right = g.cw - g.rightPad, top = g.topPad;
+  const pMin = -20, pMax = 120;
+  const { k, d, j } = computeKdj(bars, 9, 3, 3);
+
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = th.divider; ctx.lineWidth = 1;
+  [20, 80].forEach(lvl => {
+    const yy = yForGeom(g, lvl, pMin, pMax);
+    ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(right, yy); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  const lineWidth = g.ch > 150 ? 1.8 : 1.2;
+  function plotLine(series, color, dash) {
+    ctx.strokeStyle = color; ctx.lineWidth = lineWidth; ctx.setLineDash(dash);
+    ctx.beginPath(); let started = false;
+    for (let i = 0; i < bars.length; i++) {
+      if (series[i] === null || series[i] === undefined) continue;
+      const xx = xForGeom(g, i + 0.5), yy = yForGeom(g, series[i], pMin, pMax);
+      if (!started) { ctx.moveTo(xx, yy); started = true; } else ctx.lineTo(xx, yy);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  plotLine(k, th.accent700, []);
+  plotLine(d, th.muted, []);
+  plotLine(j, th.accent, [3, 3]);
+
+  const lastI = bars.length - 1;
+  ctx.font = "10.5px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillStyle = th.ink;
+  ctx.fillText(`KDJ(9,3,3) K ${fmtOrDash(k[lastI])} · D ${fmtOrDash(d[lastI])} · J ${fmtOrDash(j[lastI])}`, left + 2, top);
+}
+
+// ---- render orchestration (rAF throttle, <=10/sec) ----
+
+let renderRafPending = false;
+let lastRenderTs = 0;
+function scheduleRenderAll() {
+  if (renderRafPending) return;
+  renderRafPending = true;
+  requestAnimationFrame(tickRenderAll);
+}
+function tickRenderAll() {
+  renderRafPending = false;
+  const now = performance.now();
+  if (now - lastRenderTs < RENDER_MIN_INTERVAL_MS) {
+    setTimeout(scheduleRenderAll, RENDER_MIN_INTERVAL_MS - (now - lastRenderTs));
+    return;
+  }
+  lastRenderTs = now;
+  renderAll();
+}
+function renderAll() {
+  renderMainChart();
+  ["vol", "rsi", "macd", "kdj"].forEach(renderPane);
+}
+
+// ---- bar lifecycle ----
+
+function freezeCurrentBar() {
+  if (!chart.currentBar) return;
+  chart.histBars.push({ ...chart.currentBar, closed: true });
+  if (chart.histBars.length > MAX_BARS) chart.histBars.shift();
+  chart.currentBar = null;
+  scheduleRenderAll();
+}
+
+function onKlineTick(k) {
+  const ts = k.t;
+  const o = parseFloat(k.o), h = parseFloat(k.h), l = parseFloat(k.l), c = parseFloat(k.c), v = parseFloat(k.v);
+  const isNewBar = !chart.currentBar || chart.currentBar.ts !== ts;
+  if (isNewBar) {
+    chart.currentBar = { ts, open: o, high: h, low: l, close: c, volume: v };
+  } else {
+    chart.currentBar.high = Math.max(chart.currentBar.high, h);
+    chart.currentBar.low = Math.min(chart.currentBar.low, l);
+    chart.currentBar.close = c;
+    chart.currentBar.volume = v;
+  }
+  scheduleRenderAll();
+  if (k.x) freezeCurrentBar();
+}
+
+function onTradeTick(price) {
+  if (!chart.currentBar || Number.isNaN(price)) return;
+  chart.currentBar.close = price;
+  if (price > chart.currentBar.high) chart.currentBar.high = price;
+  if (price < chart.currentBar.low) chart.currentBar.low = price;
+  scheduleRenderAll();
+}
+
+function initChart(bars) {
+  const closedBars = bars.filter(b => b.closed !== false);
+  chart.histBars = closedBars.slice(-MAX_BARS).map(b => (
+    { ts: b.ts, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume, closed: true }));
+  const forming = bars.find(b => b.closed === false);
+  chart.currentBar = forming
+    ? { ts: forming.ts, open: forming.open, high: forming.high, low: forming.low, close: forming.close, volume: forming.volume }
+    : null;
+  resetView();
+  scheduleRenderAll();
+}
+
+// ---- binance WS live feed ----
+
+function binanceSymbol(symbol) { return symbol.replace("/", "").toLowerCase(); }
+
+function wsStreamUrl(symbol, tf) {
+  const s = binanceSymbol(symbol);
+  return `wss://stream.binance.com:9443/stream?streams=${s}@kline_${tf}/${s}@aggTrade`;
+}
+
+function setLiveStatus(mode) {
+  liveStatus = mode;
+  const el = document.getElementById("live-status");
+  if (!el) return;
+  el.classList.remove("live", "reconnecting", "poll");
+  el.classList.add(mode);
+  el.textContent = mode === "live" ? "WSS 即時" : mode === "reconnecting" ? "重連中" : "輪詢備援";
+}
+
+function startPollFallback() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => { fetchAndRebuildFromRest(chart.symbol, chart.tf); }, 30000);
+}
+function stopPollFallback() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function fetchAndRebuildFromRest(symbol, tf) {
+  if (symbol !== chart.symbol || tf !== chart.tf) return;
+  try {
+    const resp = await getJSON(`/api/ohlc?symbol=${encodeURIComponent(symbol)}&tf=${tf}`);
+    if (resp && resp.error === "live_unavailable") return;
+    initChart(resp.bars || []);
+  } catch (e) { /* transient -- keep last rendered chart, retry next poll */ }
+}
+
+function handleWsMessage(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch (e) { return; }
+  const stream = msg && msg.stream, data = msg && msg.data;
+  if (!stream || !data) return;
+  if (stream.indexOf("@kline_") !== -1 && data.k) onKlineTick(data.k);
+  else if (stream.indexOf("@aggTrade") !== -1 && data.p !== undefined) onTradeTick(parseFloat(data.p));
+}
+
+function openSocket(symbol, tf) {
+  let socket;
+  try { socket = new WebSocket(wsStreamUrl(symbol, tf)); }
+  catch (e) { scheduleReconnect(symbol, tf); return; }
+  ws = socket;
+  socket.addEventListener("open", () => {
+    if (ws !== socket) return;
+    wsReconnectDelay = WS_RECONNECT_MIN_MS;
+    stopPollFallback();
+    setLiveStatus("live");
+  });
+  socket.addEventListener("message", (ev) => { if (ws === socket) handleWsMessage(ev.data); });
+  const onDrop = () => {
+    if (ws !== socket) return;
+    ws = null;
+    if (!wsShouldReconnect) return;
+    setLiveStatus("reconnecting");
+    startPollFallback();
+    scheduleReconnect(symbol, tf);
+  };
+  socket.addEventListener("close", onDrop);
+  socket.addEventListener("error", onDrop);
+}
+
+function scheduleReconnect(symbol, tf) {
+  clearTimeout(wsReconnectTimer);
+  const delay = wsReconnectDelay;
+  wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_MS);
+  wsReconnectTimer = setTimeout(() => { if (wsShouldReconnect) openSocket(symbol, tf); }, delay);
+}
+
+function connectLive(symbol, tf) {
+  wsShouldReconnect = true;
+  wsReconnectDelay = WS_RECONNECT_MIN_MS;
+  setLiveStatus("poll");
+  startPollFallback();
+  openSocket(symbol, tf);
+}
+
+function disconnectLive() {
+  wsShouldReconnect = false;
+  clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = null;
+  stopPollFallback();
+  if (ws) { const s = ws; ws = null; s.close(); }
+}
+
+// ---- drawing tool interaction ----
+
+function setActiveToolUI(tool) {
+  document.querySelectorAll(".draw-btn[data-tool]").forEach(b => b.classList.toggle("active", b.dataset.tool === tool));
+}
+
+function canvasMousePos(evt, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+}
+function isOnPriceAxis(x, cw) { return x >= cw - PRICE_AXIS_W; }
+
+function captureFreehandPoint(pos) {
+  freehandRawCount++;
+  if (freehandRawCount % 3 !== 1) return; // keep 1 of every 3 raw points
+  if (freehandPoints.length >= 300) return;
+  freehandPoints.push({ ts: indexToTs(invXMain(pos.x)), price: invYMain(pos.y) });
+}
+
+function finalizeFreehand() {
+  if (freehandPoints && freehandPoints.length >= 2) {
+    drawingsFor(chart.symbol).free.push({ points: freehandPoints.slice(0, 300) });
+    saveDrawings();
+  }
+  freehandPoints = null;
+  activeTool = "cursor"; setActiveToolUI("cursor");
+  scheduleRenderAll();
+}
+
+function attachPaneWheel(canvas) {
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const total = totalBarCount();
+    if (total === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const left = 4, right = rect.width - PRICE_AXIS_W;
+    const iCursor = view.i0 + (px - left) / (right - left) * (view.i1 - view.i0);
+    const w = view.i1 - view.i0;
+    const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+    const newW = Math.max(MIN_VISIBLE_BARS, Math.min(w * factor, total * 1.4));
+    const frac = (iCursor - view.i0) / w;
+    view.i0 = iCursor - frac * newW;
+    view.i1 = view.i0 + newW;
+    clampView();
+    scheduleRenderAll();
+  }, { passive: false });
+}
+
+function wireChartInteraction() {
+  const mainCanvas = document.getElementById("main-canvas");
+
+  mainCanvas.addEventListener("mousedown", (e) => {
+    const pos = canvasMousePos(e, mainCanvas);
+    if (activeTool === "free") {
+      freehandPoints = []; freehandRawCount = 0;
+      captureFreehandPoint(pos);
+      e.preventDefault();
+      return;
+    }
+    if (activeTool !== "cursor") return;
+    const onAxis = isOnPriceAxis(pos.x, mainCanvasState.cw);
+    panState = { mode: onAxis ? "scale" : "pan", startX: pos.x, startY: pos.y,
+      startI0: view.i0, startI1: view.i1, startPMin: view.pMin, startPMax: view.pMax };
+    if (!onAxis) setFollow(false);
+    view.auto = false;
+    e.preventDefault();
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    const pos = canvasMousePos(e, mainCanvas);
+    mousePos = pos;
+    if (panState) {
+      const u = mainUsable();
+      if (panState.mode === "pan") {
+        const dI = -(pos.x - panState.startX) / (u.right - u.left) * (panState.startI1 - panState.startI0);
+        const dP = (pos.y - panState.startY) / (u.bottom - u.top) * (panState.startPMax - panState.startPMin);
+        view.i0 = panState.startI0 + dI;
+        view.i1 = panState.startI1 + dI;
+        view.pMin = panState.startPMin + dP;
+        view.pMax = panState.startPMax + dP;
+        clampView();
+      } else {
+        const dy = pos.y - panState.startY;
+        const factor = Math.exp(dy * 0.006);
+        const mid = (panState.startPMin + panState.startPMax) / 2;
+        const halfRange = (panState.startPMax - panState.startPMin) / 2 * factor;
+        view.pMin = mid - halfRange;
+        view.pMax = mid + halfRange;
+      }
+      scheduleRenderAll();
+      return;
+    }
+    if (activeTool === "free" && freehandPoints) { captureFreehandPoint(pos); scheduleRenderAll(); return; }
+    if ((activeTool === "trend" || activeTool === "fib") && drawPending) scheduleRenderAll();
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (panState) { panState = null; return; }
+    if (activeTool === "free" && freehandPoints) finalizeFreehand();
+  });
+
+  mainCanvas.addEventListener("click", (e) => {
+    if (panState) return;
+    const pos = canvasMousePos(e, mainCanvas);
+    if (activeTool === "hline") {
+      const price = invYMain(pos.y);
+      drawingsFor(chart.symbol).hline.push({ price });
+      saveDrawings();
+      activeTool = "cursor"; setActiveToolUI("cursor");
+      scheduleRenderAll();
+      return;
+    }
+    if (activeTool === "trend" || activeTool === "fib") {
+      const anchor = { ts: indexToTs(invXMain(pos.x)), price: invYMain(pos.y) };
+      if (!drawPending) {
+        drawPending = { type: activeTool, p1: anchor };
+      } else {
+        drawingsFor(chart.symbol)[drawPending.type].push({ p1: drawPending.p1, p2: anchor });
+        saveDrawings();
+        drawPending = null;
+        activeTool = "cursor"; setActiveToolUI("cursor");
+      }
+      scheduleRenderAll();
+    }
+  });
+
+  mainCanvas.addEventListener("dblclick", () => {
+    if (activeTool !== "cursor") return;
+    resetView();
+    scheduleRenderAll();
+  });
+
+  mainCanvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const total = totalBarCount();
+    if (total === 0) return;
+    const pos = canvasMousePos(e, mainCanvas);
+    const iCursor = invXMain(pos.x);
+    const w = view.i1 - view.i0;
+    const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+    const newW = Math.max(MIN_VISIBLE_BARS, Math.min(w * factor, total * 1.4));
+    const frac = (iCursor - view.i0) / w;
+    view.i0 = iCursor - frac * newW;
+    view.i1 = view.i0 + newW;
+    clampView();
+    scheduleRenderAll();
+  }, { passive: false });
+
+  document.querySelectorAll(".pane-canvas").forEach(attachPaneWheel);
+
+  document.querySelectorAll(".draw-btn[data-tool]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      activeTool = btn.dataset.tool;
+      drawPending = null;
+      freehandPoints = null;
+      setActiveToolUI(activeTool);
+    });
+  });
+  document.getElementById("draw-clear-btn").addEventListener("click", () => {
+    if (!chart.symbol) return;
+    drawings[chart.symbol] = { trend: [], hline: [], fib: [], free: [] };
+    saveDrawings();
+    activeTool = "cursor"; setActiveToolUI("cursor");
+    scheduleRenderAll();
+  });
+
+  document.getElementById("follow-btn").addEventListener("click", () => {
+    setFollow(!view.follow);
+    if (view.follow) clampView();
+    scheduleRenderAll();
+  });
+
+  document.querySelectorAll(".ind-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const ind = btn.dataset.ind;
+      uiSettings.indicators[ind] = !uiSettings.indicators[ind];
+      btn.classList.toggle("active", uiSettings.indicators[ind]);
+      saveUiSettings();
+      updatePaneVisibility();
+      scheduleRenderAll();
+    });
+  });
+
+  document.querySelectorAll(".pane-block").forEach(block => {
+    const name = block.dataset.pane;
+    const resizer = block.querySelector(".pane-resizer");
+    let dragging = null;
+    resizer.addEventListener("mousedown", (e) => {
+      dragging = { startY: e.clientY, startH: block.getBoundingClientRect().height };
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const dy = e.clientY - dragging.startY;
+      const newH = Math.max(40, Math.min(260, dragging.startH + dy));
+      block.style.height = newH + "px";
+      uiSettings.paneHeights[name] = newH;
+      scheduleRenderAll();
+    });
+    window.addEventListener("mouseup", () => {
+      if (dragging) { dragging = null; saveUiSettings(); }
+    });
+  });
+
+  document.getElementById("theme-btn").addEventListener("click", () => {
+    uiSettings.theme = uiSettings.theme === "dark" ? "light" : "dark";
+    saveUiSettings();
+    applyTheme();
+  });
+
+  document.getElementById("quiet-btn").addEventListener("click", () => {
+    uiSettings.quietOpen = !uiSettings.quietOpen;
+    saveUiSettings();
+    applyQuietState();
+  });
+
+  window.addEventListener("resize", () => scheduleRenderAll());
+}
+
+function applyTheme() {
+  document.documentElement.dataset.theme = uiSettings.theme;
+  scheduleRenderAll();
+  // the expanded balance chart keeps its construction-time colors -- rebuild
+  if (expandedAcctSymbol && lastSummary) {
+    const host = document.getElementById("acct-expand-host");
+    if (host.childElementCount) openAcctExpand(expandedAcctSymbol);
+  }
+}
+
+function applyQuietState() {
+  const list = document.getElementById("event-list");
+  if (list) list.dataset.quiet = uiSettings.quietOpen ? "on" : "off";
+}
+
+function applyUiSettingsToDom() {
+  document.querySelectorAll(".ind-btn").forEach(btn => {
+    btn.classList.toggle("active", !!uiSettings.indicators[btn.dataset.ind]);
+  });
+  updatePaneVisibility();
+  document.documentElement.dataset.theme = uiSettings.theme;
+  applyQuietState();
+}
+
+// ---- price panel orchestration ----
+
+async function ensureLiveChart(symbol, tf) {
+  if (chart.symbol === symbol && chart.tf === tf) return;
+  disconnectLive();
+  activeTool = "cursor"; drawPending = null; freehandPoints = null; setActiveToolUI("cursor");
+  chart.symbol = symbol; chart.tf = tf;
+  chart.histBars = []; chart.currentBar = null;
+  try {
+    const resp = await getJSON(`/api/ohlc?symbol=${encodeURIComponent(symbol)}&tf=${tf}`);
+    if (resp && resp.error === "live_unavailable") {
+      resetView();
+      scheduleRenderAll();
+      showChartMessage("即時行情暫不可用（網路），4h/1d 仍可看資料庫");
+    } else {
+      hideChartMessage();
+      initChart(resp.bars || []);
+    }
+  } catch (e) {
+    hideChartMessage();
+    initChart([]);
+  }
+  connectLive(symbol, tf);
+}
+
+function renderRuleInfo(symbol) {
+  const el = document.getElementById("rule-info");
+  const st = lastSummary && lastSummary.symbols[symbol];
+  const tg = st && st.trigger;
+  if (!tg) { el.innerHTML = ""; return; }
+  const distUp = tg.dist_up_pct === null ? "-" :
+    (tg.dist_up_pct <= 0 ? "已越過" : `離 +${fmtNum(tg.dist_up_pct, 2)}%`);
+  const distDn = tg.dist_dn_pct === null ? "-" :
+    (tg.dist_dn_pct <= 0 ? "已越過" : `離 −${fmtNum(tg.dist_dn_pct, 2)}%`);
+  el.innerHTML = `
+    <span><span class="text-muted">上軌 </span>${fmtNum(tg.upper, 2)}<span class="text-muted"> · ${distUp}</span></span>
+    <span><span class="text-muted">下軌 </span>${fmtNum(tg.lower, 2)}<span class="text-muted"> · ${distDn}</span></span>
+    <span><span class="text-muted">寬度排名 </span>${tg.width_rank === null ? "-" : fmtNum(tg.width_rank, 1)}<span class="text-muted"> · 需 &lt;20</span></span>
+    <span class="text-muted">規則棒 ${fmtTsShort(tg.ts)}Z</span>
+  `;
+}
+
+async function loadPricePanel(symbol) {
+  document.getElementById("pl-symbol").textContent = symbol;
+  renderRuleInfo(symbol);
+  await ensureLiveChart(symbol, priceTf);
+}
+
+// ---------- account cells (equity step sparkline / expand) ----------
+
+async function loadTradesForAllSymbols() {
+  const results = await Promise.all(SYMBOLS.map(sym => getJSON("/api/trades?symbol=" + encodeURIComponent(sym))));
+  SYMBOLS.forEach((sym, i) => { tradesBySymbol[sym] = results[i]; });
+}
+
+async function loadEquityForAllSymbols() {
+  const results = await Promise.all(SYMBOLS.map(sym => getJSON("/api/equity?symbol=" + encodeURIComponent(sym))));
+  SYMBOLS.forEach((sym, i) => { equityBySymbol[sym] = results[i]; });
+}
+
+function sampleEquidistant(rows, maxPoints) {
+  if (rows.length <= maxPoints) return rows;
+  const out = [];
+  const step = (rows.length - 1) / (maxPoints - 1);
+  for (let i = 0; i < maxPoints; i++) out.push(rows[Math.round(i * step)]);
+  return out;
+}
+
+function drawSparkline(canvas, rows) {
+  const th = themeColors();
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const cw = Math.max(60, Math.round(rect.width)), ch = 42;
+  canvas.width = cw * dpr; canvas.height = ch * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  if (!rows.length) return;
+  const sampled = sampleEquidistant(rows, 80);
+  const values = sampled.map(r => r.equity);
+  const lo = Math.min(...values, CASH0), hi = Math.max(...values, CASH0);
+  const pad = (hi - lo) * 0.1 || 1;
+  const yLo = lo - pad, yHi = hi + pad;
+  const yFor = (v) => ch - 2 - (v - yLo) / (yHi - yLo) * (ch - 4);
+  const xFor = (i) => 1 + i / (sampled.length - 1 || 1) * (cw - 2);
+  // deploy baseline
+  ctx.strokeStyle = th.divider; ctx.setLineDash([3, 3]);
+  const yBase = yFor(CASH0);
+  ctx.beginPath(); ctx.moveTo(0, yBase); ctx.lineTo(cw, yBase); ctx.stroke();
+  ctx.setLineDash([]);
+  // stepped equity line
+  ctx.strokeStyle = th.accent700; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let prevY = null;
+  sampled.forEach((r, i) => {
+    const xx = xFor(i), yy = yFor(r.equity);
+    if (i === 0) { ctx.moveTo(xx, yy); }
+    else { ctx.lineTo(xx, prevY); ctx.lineTo(xx, yy); }
+    prevY = yy;
+  });
+  ctx.stroke();
+}
+
+function openAcctExpand(symbol) {
+  const host = document.getElementById("acct-expand-host");
+  host.innerHTML = "";
+  if (acctBalanceChart) { acctBalanceChart.destroy(); acctBalanceChart = null; }
+  const th = themeColors();
+  const note = document.createElement("div");
+  note.className = "text-muted";
+  note.style.cssText = "font-size:12px;margin-bottom:6px";
+  note.textContent = `${symbol} 餘額走勢 · 部署基準 ${fmtNum(CASH0, 0)}（虛線）`;
+  const canvas = document.createElement("canvas");
+  canvas.className = "acct-balance-canvas";
+  host.appendChild(note);
+  host.appendChild(canvas);
+  expandedAcctSymbol = symbol;
+
+  const rows = equityBySymbol[symbol] || [];
+  const labels = rows.map(r => fmtTsShort(r.ts));
+  const data = rows.map(r => r.equity);
+  const baseline = rows.map(() => CASH0);
+  const mutedTick = th.muted;
+  acctBalanceChart = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "餘額", data, borderColor: th.accent700, backgroundColor: "rgba(89,128,166,0.14)",
+        pointRadius: 0, borderWidth: 1.5, fill: true, stepped: true },
+      { label: `部署基準 ${fmtNum(CASH0, 0)}`, data: baseline, borderColor: mutedTick, borderDash: [6, 4],
+        pointRadius: 0, borderWidth: 1, fill: false },
+    ] },
+    options: {
+      responsive: true, animation: false,
+      scales: {
+        x: { ticks: { color: mutedTick, maxTicksLimit: 10 }, grid: { color: th.divider } },
+        y: { ticks: { color: mutedTick }, grid: { color: th.divider } },
+      },
+      plugins: { legend: { labels: { color: th.ink } } },
+    },
+  });
+}
+
+function toggleAcctExpand(symbol) {
+  if (expandedAcctSymbol === symbol) {
+    document.getElementById("acct-expand-host").innerHTML = "";
+    if (acctBalanceChart) { acctBalanceChart.destroy(); acctBalanceChart = null; }
+    expandedAcctSymbol = null;
+    return;
+  }
+  openAcctExpand(symbol);
+}
+
+function renderAccountCells(s) {
+  const wrap = document.getElementById("acct-grid");
+  wrap.innerHTML = "";
+  wrap.style.gridTemplateColumns = `1.15fr repeat(${SYMBOLS.length || 1}, 1fr)`;
+  const failDetails = [];
+
+  let totalEquity = 0, equityKnown = 0, posCount = 0;
+  for (const symbol of SYMBOLS) {
+    const st = s.symbols[symbol];
+    if (st && st.equity !== null && st.equity !== undefined) { totalEquity += st.equity; equityKnown++; }
+    if (st && st.position) posCount++;
+  }
+
+  const total = document.createElement("div");
+  total.className = "cell total-cell";
+  const totRet = equityKnown === SYMBOLS.length ? (totalEquity / TOTAL0 - 1) * 100 : null;
+  const totTag = posCount === 0 ? '<span class="tag tag-accent">空手</span>'
+    : `<span class="tag tag-accent">持倉 ${posCount} 檔</span>`;
+  total.innerHTML = `
+    <div style="display:flex;align-items:baseline;gap:8px">
+      <span class="hfont" style="font-size:15px;letter-spacing:.06em">全商品合計</span>${totTag}
+    </div>
+    <div class="equity">${equityKnown ? fmtNum(totalEquity, 2) : "-"}</div>
+    <div class="ret ${totRet !== null && totRet >= 0 ? "up" : ""}">${totRet === null ? "-"
+      : `${fmtSigned(totalEquity - TOTAL0, 2)} · ${fmtSigned(totRet, 2)}%`}<span class="text-muted">（本金 ${fmtNum(TOTAL0, 0)}）</span></div>
+    <div class="text-muted" style="font-size:11.5px;margin-top:8px;line-height:1.6">各商品獨立 ${fmtNum(CASH0, 0)} 起算，互不撥款。${posCount === 0 ? "目前無任何持倉，出場規則待命中。" : "持倉明細見下方代管卡。"}</div>
+  `;
+  wrap.appendChild(total);
+
+  for (const symbol of SYMBOLS) {
+    const st = s.symbols[symbol];
+    const ok = st ? st.health_ok : false;
+    if (!ok) {
+      const reasons = st ? st.health_reasons.join("；") : "n/a";
+      const lastTs = st ? st.last_ts : null;
+      failDetails.push(`${symbol}：最新棒 ${fmtTsFull(lastTs)}，${reasons}（詳見 data\\tick.log）`);
+    }
+    const cell = document.createElement("div");
+    cell.className = "cell sym-cell" + (symbol === activeSymbol ? " active" : "");
+    cell.dataset.symbol = symbol;
+    const retPct = st && st.ret_pct !== null && st.ret_pct !== undefined ? st.ret_pct * 100 : null;
+    const pos = st && st.position;
+    const posTag = !ok ? '<span class="tag tag-warn">資料異常</span>'
+      : pos ? `<span class="tag tag-accent">持${dirWord(pos.dir)}單</span>`
+      : (symbol === activeSymbol ? '<span class="tag tag-accent">檢視中 · 空手</span>' : '<span class="tag tag-outline">空手</span>');
+    cell.innerHTML = `
+      <div class="row1"><span class="sym">${symbol}</span>${posTag}</div>
+      <div class="equity">${st && st.equity !== null && st.equity !== undefined ? fmtNum(st.equity, 2) : "-"}</div>
+      <div class="ret ${retPct !== null && retPct >= 0 ? "up" : ""}">${retPct === null ? "-" : fmtSigned(retPct, 2) + "%"}${pos ? `<span class="text-muted"> · 未實現 ${fmtSigned(pos.unrealized, 2)}</span>` : ""}</div>
+      <canvas class="spark" title="點擊展開餘額走勢"></canvas>
+      <div class="verdict">最新判定 ${st && st.latest_verdict ? fmtHm(st.latest_verdict.ts) + "Z · " + verdictShort(symbol, s) : "-"}</div>
+    `;
+    cell.addEventListener("click", () => loadSymbolTab(symbol));
+    const spark = cell.querySelector(".spark");
+    spark.addEventListener("click", (ev) => { ev.stopPropagation(); toggleAcctExpand(symbol); });
+    wrap.appendChild(cell);
+    requestAnimationFrame(() => drawSparkline(spark, equityBySymbol[symbol] || []));
+  }
+
+  const statusEl = document.getElementById("acct-status");
+  if (failDetails.length) {
+    statusEl.classList.add("show");
+    statusEl.innerHTML = failDetails.map(t => `⚠ ${t}`).join("<br>");
+  } else {
+    statusEl.classList.remove("show");
+    statusEl.innerHTML = "";
+  }
+  if (expandedAcctSymbol) openAcctExpand(expandedAcctSymbol);
+}
+
+// ---------- trades panel ----------
+
+function renderTrades(symbol) {
+  document.getElementById("trades-sym").textContent = symbol;
+  const rows = tradesBySymbol[symbol] || [];
+  const tbody = document.querySelector("#trades-table tbody");
+  tbody.innerHTML = "";
+
+  const closed = rows.filter(t => t.exit_ts !== null);
+  const sumPnl = closed.reduce((a, t) => a + (t.pnl || 0), 0);
+  const sumFees = closed.reduce((a, t) => a + (t.fees || 0), 0);
+  const sumFunding = closed.reduce((a, t) => a + (t.funding || 0), 0);
+  document.getElementById("trades-summary").textContent = closed.length
+    ? `${closed.length} 筆已平倉 · 累計 ${fmtSigned(sumPnl, 2)}（含手續費 ${fmtNum(sumFees, 2)}、資金費用 ${fmtSigned(sumFunding, 2)}）`
+    : "";
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">尚無成交</td></tr>';
+    return;
+  }
+  for (const t of rows) {
+    const tr = document.createElement("tr");
+    if (t.exit_ts === null) {
+      tr.className = "open-row";
+      tr.innerHTML = `
+        <td>${fmtTsShort(t.entry_ts)}Z</td><td>持倉中</td>
+        <td>做${dirWord(t.direction)}</td>
+        <td class="num">${fmtNum(t.qty, 4)}</td>
+        <td class="num">${fmtNum(t.entry_px, 2)}</td><td class="num">—</td>
+        <td class="num">${fmtNum(t.fees, 2)}</td><td class="num">${fmtSigned(t.funding, 2)}</td>
+        <td class="pnl">${fmtSigned(t.unrealized, 2)}</td>
+        <td>未實現</td>
+      `;
+      tbody.appendChild(tr);
+      const sub = document.createElement("tr");
+      sub.className = "sub";
+      const distStr = (t.dist_to_stop_pct === null || t.dist_to_stop_pct === undefined)
+        ? "" : `（距現價 ${fmtSigned(t.dist_to_stop_pct, 2)}%）`;
+      sub.innerHTML = `<td colspan="10">追蹤停損 ${fmtNum(t.current_stop, 2)}${distStr} · 最新收盤 ${fmtNum(t.last_close, 2)}</td>`;
+      tbody.appendChild(sub);
+      continue;
+    }
+    tr.innerHTML = `
+      <td>${fmtTsShort(t.entry_ts)}Z</td><td>${fmtTsShort(t.exit_ts)}Z</td>
+      <td>做${dirWord(t.direction)}</td>
+      <td class="num">${fmtNum(t.qty, 4)}</td>
+      <td class="num">${fmtNum(t.entry_px, 2)}</td><td class="num">${fmtNum(t.exit_px, 2)}</td>
+      <td class="num">${fmtNum(t.fees, 2)}</td><td class="num">${fmtSigned(t.funding, 2)}</td>
+      <td class="pnl">${t.pnl === null ? "-" : fmtSigned(t.pnl, 2)}</td>
+      <td>${shortReason(t.reason)}</td>
+    `;
+    tbody.appendChild(tr);
+    if (t.reason_text) {
+      const sub = document.createElement("tr");
+      sub.className = "sub";
+      sub.innerHTML = `<td colspan="10">${t.reason_text}</td>`;
+      tbody.appendChild(sub);
+    }
+  }
+}
+
+// ---------- strategy log (events timeline) ----------
+
+function renderEvents(items) {
+  const list = document.getElementById("event-list");
+  document.getElementById("events-sym").textContent = activeSymbol;
+  list.innerHTML = "";
+  applyQuietState();
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">尚無資料</div>';
+    return;
+  }
+  const badgeInfo = { entry: "進場", exit: "出場", reverse: "反手" };
+  items.forEach((it, idx) => {
+    const row = document.createElement("div");
+    row.className = "log-row";
+    if (it.type === "silence") {
+      const label = (it.text || "").includes("持倉") ? "持倉靜默" : "靜默";
+      row.innerHTML = `
+        <div class="when range">${fmtTsShort(it.from_ts)}Z<br>→ ${fmtTsShort(it.to_ts)}Z</div>
+        <div class="body"><span class="dot"></span>
+          <div class="q-head"><span class="tag tag-neutral">${label} ${it.n} 根</span><span class="q-bar"></span></div>
+          <div class="q-text sub">${it.text}</div>
+        </div>
+      `;
+    } else {
+      const label = badgeInfo[it.kind] || it.kind;
+      row.innerHTML = `
+        <div class="when">${fmtTsShort(it.ts)}<span class="dim">Z</span></div>
+        <div class="body hot"><span class="dot"></span>
+          <div class="main"><span class="tag tag-accent">${label}</span><span>${it.text}</span></div>
+          <div class="sub">${it.sub || ""}</div>
+        </div>
+      `;
+    }
+    list.appendChild(row);
+  });
+  const tail = document.createElement("div");
+  tail.className = "text-muted";
+  tail.style.cssText = "font-size:11px;margin-top:2px;padding-left:110px";
+  tail.textContent = "部署起點 — 紙上帳自此起算";
+  list.appendChild(tail);
+}
+
+async function loadEvents(symbol) {
+  const items = await getJSON("/api/events?symbol=" + encodeURIComponent(symbol));
+  eventsBySymbol[symbol] = items;
+  renderEvents(items);
+}
+
+// ---------- verdict helpers ----------
+
+function verdictShort(symbol, s) {
+  const st = s.symbols[symbol];
+  const verdict = st && st.latest_verdict;
+  if (!verdict) return "-";
+  if (verdict.action === "hold") {
+    if (st.position) return "hold（持倉續抱）";
+    return `hold（${verdict.reason || "擠壓未成立"}）`;
+  }
+  return verdict.action;
+}
+
+// ---------- bar clock ----------
+
+function renderBarClock(s) {
+  if (!s) return;
+  document.getElementById("clock-epoch").innerHTML =
+    `${s.paper_epoch}<span class="dim">Z</span>`;
+
+  const rulebarEl = document.getElementById("clock-rulebar");
+  const checkedEl = document.getElementById("clock-checked");
+  if (s.latest_bar_ts) {
+    rulebarEl.innerHTML = `${fmtTsShort(s.latest_bar_ts)}<span class="dim">Z → ${fmtHm(s.latest_bar_ts + STEP_MS)}Z</span>`;
+  } else {
+    rulebarEl.textContent = "—";
+  }
+  if (s.last_check_ts) {
+    const ms = Date.parse(s.last_check_ts);
+    checkedEl.textContent = `已於 ${fmtTsShort(ms)}Z 檢查 · ${s.last_check_overdue ? "已逾期" : "未逾期"}`;
+    checkedEl.classList.toggle("bad", !!s.last_check_overdue);
+  } else {
+    checkedEl.textContent = "尚無檢查紀錄";
+  }
+  updateClockTick();
+}
+
+function updateClockTick() {
+  const now = Date.now();
+  const s = lastSummary;
+
+  // forming bar window derives from the latest CLOSED rule bar when known,
+  // else from the wall-clock 4h grid (same thing when data is fresh).
+  let formOpen;
+  if (s && s.latest_bar_ts) formOpen = s.latest_bar_ts + STEP_MS;
+  else formOpen = Math.floor(now / STEP_MS) * STEP_MS;
+  const formClose = formOpen + STEP_MS;
+  const pct = Math.max(0, Math.min(100, (now - formOpen) / STEP_MS * 100));
+  document.getElementById("clock-forming-lbl").textContent =
+    `成形中的棒 ${fmtHm(formOpen)}Z → ${fmtHm(formClose)}Z`;
+  document.getElementById("forming-fill").style.flex = String(pct);
+  document.getElementById("forming-rest").style.flex = String(100 - pct);
+  document.getElementById("forming-pct").textContent = `${Math.round(pct)}%`;
+  const d = new Date(now);
+  document.getElementById("clock-now").textContent =
+    `現在 ${fmtHm(now)}:${String(d.getUTCSeconds()).padStart(2, "0")}Z · 只有 K 線圖是即時的`;
+
+  // next check = next 4h boundary + :05 (schtasks cadence; UTC+8 local 4h
+  // boundaries coincide with UTC ones)
+  const boundary = Math.floor(now / STEP_MS) * STEP_MS + 5 * 60 * 1000;
+  const nextTick = boundary > now ? boundary : boundary + STEP_MS;
+  const mins = Math.max(0, Math.round((nextTick - now) / 60000));
+  const rel = mins >= 60 ? `約 ${Math.floor(mins / 60)} 小時 ${mins % 60} 分後` : `約 ${mins} 分後`;
+  document.getElementById("clock-next").innerHTML =
+    `${fmtHm(nextTick)}<span class="dim">Z · ${rel}</span>`;
+}
+
+// ---------- E15/E16 side panels ----------
+
+function renderTriggerPanel(s) {
+  const wrap = document.getElementById("trigger-rows");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  let openGates = 0;
+  for (const symbol of SYMBOLS) {
+    const st = (s && s.symbols[symbol]) || {};
+    const tg = st.trigger;
+    const block = document.createElement("div");
+    block.className = "watch-block" + (symbol === activeSymbol ? " active-sym" : "");
+    if (!tg) {
+      block.innerHTML = `<div class="watch-head"><span class="sym">${symbol}</span><span class="text-muted" style="font-size:11.5px">尚無訊號資料</span></div>`;
+      wrap.appendChild(block);
+      continue;
+    }
+    if (tg.gate_next) openGates++;
+
+    // price position between the bands (clamped); label points at the
+    // nearer trigger side
+    let posPct = 50;
+    if (tg.upper !== null && tg.lower !== null && tg.upper !== tg.lower && tg.close !== null) {
+      posPct = Math.max(1.5, Math.min(98.5, (tg.close - tg.lower) / (tg.upper - tg.lower) * 100));
+    }
+    let markLbl;
+    if (tg.dist_up_pct !== null && tg.dist_up_pct <= 0) markLbl = "已越過上軌";
+    else if (tg.dist_dn_pct !== null && tg.dist_dn_pct <= 0) markLbl = "已越過下軌";
+    else if (tg.dist_up_pct !== null && tg.dist_dn_pct !== null)
+      markLbl = tg.dist_up_pct <= tg.dist_dn_pct
+        ? `↑ 離上軌 ${fmtNum(tg.dist_up_pct, 2)}%` : `↓ 離下軌 ${fmtNum(tg.dist_dn_pct, 2)}%`;
+    else markLbl = "-";
+    // keep the under-track label inside the card near either edge
+    let distStyle;
+    if (posPct < 14) distStyle = `left:${posPct}%`;
+    else if (posPct > 86) distStyle = `right:${(100 - posPct).toFixed(1)}%`;
+    else distStyle = `left:${posPct}%;transform:translateX(-50%)`;
+
+    const gateTag = tg.gate_next
+      ? `<span class="tag tag-accent">閘門開 · 最低 ${fmtNum(tg.min_rank, 1)}</span>`
+      : `<span class="tag tag-neutral">閘門關 · 最低 ${tg.min_rank === null ? "-" : fmtNum(tg.min_rank, 1)}</span>`;
+    const fillPct = tg.min_rank === null ? 0 : Math.max(0, Math.min(100, tg.min_rank));
+    const ranksStr = (tg.recent_ranks || []).map(r => r === null ? "-" : fmtNum(r, 0)).join(" · ");
+    const posNote = st.position
+      ? `<div class="ranks-note">持${dirWord(st.position.dir)}單中：同向突破不加碼，反向突破會平倉反手</div>` : "";
+
+    block.innerHTML = `
+      <div class="watch-head">
+        <span class="sym">${symbol}</span>
+        <span class="text-muted" style="font-size:11.5px">收盤 ${fmtNum(tg.close, 2)}</span>
+        <span style="margin-left:auto">${gateTag}</span>
+      </div>
+      <div class="rail-wrap">
+        <div class="rail-ends"><span>下軌 ${fmtNum(tg.lower, 2)}</span><span>上軌 ${fmtNum(tg.upper, 2)}</span></div>
+        <div class="rail-track"><span class="mid"></span><span class="mark" style="left:${posPct}%"></span></div>
+        <div class="rail-dist"><span style="${distStyle}">${markLbl}</span></div>
+      </div>
+      <div class="gauge-row">
+        <span class="lbl">擠壓閘門</span>
+        <div class="gauge ${tg.gate_next ? "hot" : ""}"><span class="fill" style="width:${fillPct}%"></span><span class="tick"></span></div>
+        <span class="val">${tg.min_rank === null ? "-" : fmtNum(tg.min_rank, 1)} / 需 &lt;20</span>
+      </div>
+      <div class="ranks-note">前 5 棒排名（新→舊）${ranksStr}</div>
+      ${posNote}
+    `;
+    wrap.appendChild(block);
+  }
+  const overall = document.getElementById("trigger-overall");
+  overall.textContent = openGates === 0 ? "三檔閘門皆關" : `${openGates} 檔閘門開`;
+  overall.className = openGates === 0 ? "tag tag-outline" : "tag tag-accent";
+  overall.style.marginLeft = "auto";
+}
+
+function renderManagedPanel(s) {
+  const wrap = document.getElementById("managed-rows");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const cfg = (s && s.exit_config) || { stall_bars: 6, stall_gain: 0, be_trigger: 1 };
+  const holders = SYMBOLS.filter(sym => s && s.symbols[sym] && s.symbols[sym].position && s.symbols[sym].managed);
+
+  const ruleRow = (tag, tagCls, name, desc) => `
+    <div class="rule-row">
+      <span class="tag ${tagCls}">${tag}</span><span class="name">${name}</span>
+      <span class="desc">${desc}</span>
+    </div>`;
+
+  if (!holders.length) {
+    wrap.innerHTML =
+      ruleRow("待命", "tag-outline", "2×ATR 追蹤停損", "隨行情單向收緊，只緊不鬆") +
+      ruleRow("待命", "tag-outline", `停滯出場 · 第 ${cfg.stall_bars} 棒起`,
+        `進場後第 ${cfg.stall_bars} 棒起逐棒檢查，收盤未獲利（門檻 ${fmtNum(cfg.stall_gain, 1)}）即以收盤平倉`) +
+      ruleRow("待命", "tag-outline", `保本鎖 · ${fmtNum(cfg.be_trigger, 0)}×R`,
+        `收盤浮盈達 ${fmtNum(cfg.be_trigger, 0)}×R 後，停損不低於成本價；R＝進場時的停損距離`);
+    return;
+  }
+
+  for (const symbol of holders) {
+    const st = s.symbols[symbol];
+    const pos = st.position, mg = st.managed;
+    const head = document.createElement("div");
+    head.className = "managed-sym-head";
+    head.style.marginTop = wrap.childElementCount ? "12px" : "0";
+    if (!wrap.childElementCount) { head.style.borderTop = "0"; head.style.paddingTop = "0"; }
+    head.innerHTML = `<span class="sym">${symbol}</span>
+      <span class="tag tag-accent">持${dirWord(pos.dir)}單 · 進場 ${fmtNum(pos.entry_px, 2)}</span>
+      <span class="text-muted" style="font-size:11px;margin-left:auto">已持 ${mg.bars_held === null ? "-" : mg.bars_held} 棒</span>`;
+    wrap.appendChild(head);
+
+    const openTrade = (tradesBySymbol[symbol] || []).find(t => t.exit_ts === null);
+    const distPct = openTrade ? openTrade.dist_to_stop_pct : null;
+    const distStr = (distPct === null || distPct === undefined) ? "" : `（距現價 ${fmtSigned(distPct, 2)}%）`;
+
+    let stallTag, stallCls, stallDesc;
+    const gainWord = pos.dir === "long" ? "低" : "高";
+    if (mg.stall_active) {
+      stallTag = "檢查中"; stallCls = "tag-accent";
+      stallDesc = mg.stall_threshold_px === null
+        ? "每棒收盤獲利不足門檻即平倉"
+        : `每棒收盤若${gainWord}於進場價 ${fmtNum(mg.stall_threshold_px, 2)} 即平倉`;
+    } else {
+      const remain = mg.stall_bars - (mg.bars_held || 0);
+      stallTag = "未開始"; stallCls = "tag-neutral";
+      stallDesc = `第 ${mg.stall_bars} 棒起每棒檢查（還剩 ${remain} 棒）`;
+    }
+    const beTag = mg.breakeven_locked ? "已鎖" : "未達";
+    const beCls = mg.breakeven_locked ? "tag-accent" : "tag-neutral";
+    const beDesc = mg.breakeven_locked
+      ? `停損已在成本價${pos.dir === "long" ? "之上" : "之下"}——這筆最差也不倒賠（跳空與費用除外）`
+      : `收盤浮盈達 ${fmtNum(mg.be_trigger, 0)}×R 後鎖住，停損不再低於成本價`;
+
+    const body = document.createElement("div");
+    body.style.marginTop = "8px";
+    body.innerHTML =
+      ruleRow("追蹤中", "tag-accent", `追蹤停損 ${fmtNum(pos.stop, 2)}${distStr}`, "2×ATR 隨行情單向收緊，只緊不鬆") +
+      ruleRow(stallTag, stallCls, `停滯出場 · 第 ${mg.stall_bars} 棒起`, stallDesc) +
+      ruleRow(beTag, beCls, `保本鎖 · ${fmtNum(mg.be_trigger, 0)}×R`, beDesc);
+    wrap.appendChild(body);
+  }
+}
+
+function renderEngMini(s) {
+  const tbody = document.querySelector("#eng-mini tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  let lblTs = null;
+  for (const symbol of SYMBOLS) {
+    const st = (s && s.symbols[symbol]) || {};
+    const tg = st.trigger, v = st.latest_verdict;
+    if (tg && lblTs === null) lblTs = tg.ts;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${symbol.split("/")[0]}</td>
+      <td class="num">${tg ? fmtNum(tg.close, 2) : "-"}</td>
+      <td class="num">${tg ? fmtNum(tg.upper, 2) : "-"}</td>
+      <td class="num">${tg ? fmtNum(tg.lower, 2) : "-"}</td>
+      <td class="num">${tg && tg.width_rank !== null ? fmtNum(tg.width_rank, 1) : "-"}</td>
+      <td>${tg ? boolCell(tg.sqz_ok) : "-"}</td>
+      <td>${v ? v.action : "-"}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  document.getElementById("eng-mini-lbl").textContent =
+    lblTs !== null ? `最新規則棒 ${fmtTsShort(lblTs)}Z · ${SYMBOLS.length} 商品` : "最新規則棒";
+}
+
+async function loadSignals(symbol) {
+  const onlyAction = document.getElementById("only-action").checked ? 1 : 0;
+  const rows = await getJSON(`/api/signals?symbol=${encodeURIComponent(symbol)}&limit=200&only_action=${onlyAction}`);
+  if (!onlyAction) signalRowsBySymbol[symbol] = rows;   // E16: BB overlay source
+  const tbody = document.querySelector("#signals-table tbody");
+  tbody.innerHTML = "";
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">無資料</td></tr>';
+    return;
+  }
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    if (r.action && r.action !== "hold") tr.style.background = "var(--color-accent-100)";
+    tr.innerHTML = `
+      <td>${fmtTsFull(r.ts)}</td><td>${fmtNum(r.close, 2)}</td>
+      <td>${fmtNum(r.upper, 2)}</td><td>${fmtNum(r.lower, 2)}</td>
+      <td>${r.width_rank === null ? "-" : fmtNum(r.width_rank, 1)}</td>
+      <td>${boolCell(r.sqz_ok)}</td><td>${boolCell(r.long_sig)}</td><td>${boolCell(r.short_sig)}</td>
+      <td>${r.position || "-"}</td><td>${r.stop_disp === null ? "-" : fmtNum(r.stop_disp, 2)}</td>
+      <td>${r.action}</td><td>${r.reason || "-"}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  scheduleRenderAll();   // bands may now be drawable
+}
+
+// ---------- tab / refresh orchestration ----------
+
+async function loadSymbolTab(symbol) {
+  activeSymbol = symbol;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.symbol === symbol));
+  await Promise.all([loadPricePanel(symbol), loadEvents(symbol), loadSignals(symbol)]);
+  renderTrades(symbol);
+  if (lastSummary) {
+    renderAccountCells(lastSummary);
+    renderTriggerPanel(lastSummary);
+  }
+}
+
+async function refreshAll() {
+  try {
+    await loadSummary();
+    await Promise.all([loadTradesForAllSymbols(), loadEquityForAllSymbols()]);
+    renderAccountCells(lastSummary);
+    renderBarClock(lastSummary);
+    renderTriggerPanel(lastSummary);
+    renderManagedPanel(lastSummary);
+    renderEngMini(lastSummary);
+    await loadSymbolTab(activeSymbol);
+    document.getElementById("last-updated").textContent = "最後更新 " + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById("last-updated").textContent = "更新失敗：" + e.message;
+  }
+}
+
+document.querySelectorAll(".tf-btn[data-tf]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    priceTf = btn.dataset.tf;
+    document.querySelectorAll(".tf-btn[data-tf]").forEach(b => b.classList.toggle("active", b === btn));
+    loadPricePanel(activeSymbol);
+  });
+});
+document.getElementById("refresh-btn").addEventListener("click", refreshAll);
+document.getElementById("only-action").addEventListener("change", () => loadSignals(activeSymbol));
+document.getElementById("engineering-toggle").addEventListener("click", () => {
+  document.getElementById("engineering-view").classList.toggle("show");
+});
+window.addEventListener("beforeunload", () => { disconnectLive(); });
+
+loadDrawings();
+loadUiSettings();
+applyUiSettingsToDom();
+wireChartInteraction();
+
+refreshAll();
+setInterval(refreshAll, 60000);
+updateClockTick();
+setInterval(updateClockTick, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+numpy>=1.26
+pandas>=2.0
+ccxt>=4.0
+backtesting>=0.3.3
+pytest>=8.0
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1  # test-only: required by fastapi.testclient.TestClient
+pystray==0.19.5
+Pillow==12.3.0
+openpyxl>=3.1
