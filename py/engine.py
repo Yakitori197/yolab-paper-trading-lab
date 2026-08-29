@@ -1,8 +1,9 @@
 """CAL-002: minimal bar-by-bar backtest engine, independent of backtesting.py.
 
-Consumes the same signal DataFrame produced by strategy_squeeze.build_signals
-(columns: ts, Open, High, Low, Close, long_sig, short_sig, atr, in_win) and
-replicates the Pine timing already specified there:
+Consumes the signal DataFrame produced by any strategy plugin via
+strategies.build_frame() -- or the legacy strategy_squeeze.build_signals()
+frame -- (columns: ts, Open, High, Low, Close, long_sig, short_sig, in_win,
+plus either stop_dist or atr) and replicates the Pine timing specified there:
   - stop-loss orders are only "working" starting the second bar after entry
     (Pine submits strategy.exit on the bar after the fill, never the entry bar)
   - the trailing stop only ever tightens (ratchet), computed from the bar's
@@ -45,6 +46,8 @@ import pandas as pd
 
 from strategy_squeeze import P as SQUEEZE_P
 
+# "atr" is the legacy way to state the stop distance (scaled by stop_mult);
+# plugin frames carry "stop_dist" instead and either one satisfies run().
 REQUIRED_COLS = ("ts", "Open", "High", "Low", "Close", "long_sig", "short_sig", "atr", "in_win")
 
 
@@ -108,8 +111,16 @@ def run(df, cash=10_000.0, fee=0.0005, tick=0.1, stop_mult=None,
     c = df["Close"].to_numpy(dtype=float)
     long_sig = df["long_sig"].to_numpy(dtype=bool)
     short_sig = df["short_sig"].to_numpy(dtype=bool)
-    atr = df["atr"].to_numpy(dtype=float)
     in_win = df["in_win"].to_numpy(dtype=bool)
+    # Per-bar stop distance. A strategy plugin states it outright
+    # (stop_dist, price units, already multiplied); the legacy frames carry
+    # ATR instead and the distance is stop_mult*ATR, which is what
+    # stop_dist becomes for the built-in rule -- identical values, so every
+    # hand-derived expectation in the tests holds verbatim either way.
+    if "stop_dist" in df.columns:
+        stop_dist = df["stop_dist"].to_numpy(dtype=float)
+    else:
+        stop_dist = stop_mult * df["atr"].to_numpy(dtype=float)
     n = len(df)
 
     trades = []       # list of dicts; open trades have exit_ts=None until closed
@@ -123,14 +134,14 @@ def run(df, cash=10_000.0, fee=0.0005, tick=0.1, stop_mult=None,
         qty = cash_now / price
         entry_fee = qty * price * fee
         cash_now -= entry_fee
-        stop0 = (price - stop_mult * atr[i]) if direction == "long" else (price + stop_mult * atr[i])
+        stop0 = (price - stop_dist[i]) if direction == "long" else (price + stop_dist[i])
         trade = dict(entry_ts=ts[i], exit_ts=None, direction=direction, qty=qty,
                      entry_px=price, exit_px=None, fees=entry_fee, funding=0.0,
                      pnl=None, exit_reason=None)
         trades.append(trade)
         position = dict(direction=direction, qty=qty, entry_px=price, entry_fee=entry_fee,
                          stop_price=stop0, stop_active=False, trade=trade, entry_bar_i=i,
-                         r0=stop_mult * atr[i], be_armed=False)
+                         r0=stop_dist[i], be_armed=False)
 
     def _close(price, i, reason):
         nonlocal cash_now, position
@@ -152,8 +163,8 @@ def run(df, cash=10_000.0, fee=0.0005, tick=0.1, stop_mult=None,
         position = None
 
     for i in range(n):
-        atr_i = atr[i]
-        atr_ok = not _isnan(atr_i)
+        sd_i = stop_dist[i]
+        sd_ok = not _isnan(sd_i)   # no stop distance yet (indicator warmup) -> no entries
 
         # 0. funding settlement at this bar's open instant (module docstring
         # rule): needs a supplied rate exactly at ts[i] and a position whose
@@ -216,12 +227,12 @@ def run(df, cash=10_000.0, fee=0.0005, tick=0.1, stop_mult=None,
         # going into this bar (the entry bar itself never reaches here with
         # a position, since entries happen below in 2c). Disabled entirely
         # when exit_after_bars is set (mutually exclusive with the stop).
-        if exit_after_bars is None and position is not None and atr_ok:
+        if exit_after_bars is None and position is not None and sd_ok:
             if position["direction"] == "long":
-                candidate = c[i] - stop_mult * atr_i
+                candidate = c[i] - sd_i
                 position["stop_price"] = max(position["stop_price"], candidate)
             else:
-                candidate = c[i] + stop_mult * atr_i
+                candidate = c[i] + sd_i
                 position["stop_price"] = min(position["stop_price"], candidate)
             # batch #8 V3 breakeven floor: armed once a close's signed gain
             # reaches be_trigger*R0; from then on the stop never sits on the
@@ -240,7 +251,7 @@ def run(df, cash=10_000.0, fee=0.0005, tick=0.1, stop_mult=None,
             position["stop_active"] = True  # working from bar i+1 onward
 
         # 2c. entry / reversal
-        if atr_ok:
+        if sd_ok:
             if long_sig[i] and (position is None or position["direction"] != "long"):
                 if position is not None and position["direction"] == "short":
                     _close(buy_fill(c[i]), i, "reversal")

@@ -1,9 +1,15 @@
-"""Squeeze Breakout Follow v1 - Python port with Pine-equivalent timing.
-Parameters FROZEN to BT-006 defaults. Calibration only; do not tune.
+"""Squeeze Breakout Follow v1 - legacy entry point, now a thin adapter.
 
-Pine timing replicated:
-- process_orders_on_close: market entries/reversals fill at the signal bar's close
-  (backtesting.py trade_on_close=True + exclusive_orders=True).
+The rule itself moved to strategies/squeeze_breakout.py when the plugin
+contract landed; this module stays as the stable import path used by
+engine.py (for the default stop_mult), the tests, and the backtesting.py
+harness below. P and build_signals() behave exactly as before -- same
+formulas, same columns, same values -- they are just sourced from the plugin
+now, so there is only ever one implementation of the rule.
+
+Pine timing replicated (unchanged):
+- process_orders_on_close: market entries/reversals fill at the signal bar's
+  close (backtesting.py trade_on_close=True + exclusive_orders=True).
 - Trailing stop: initialized at the signal bar (close - mult*ATR), but the stop
   ORDER only becomes working from the second bar after entry, because Pine's
   strategy.exit is first submitted on the bar after the fill. Replicated by
@@ -17,25 +23,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from backtesting import Strategy
 
-import indicators as ind
+from strategies import squeeze_breakout as _rule
 
-P = dict(bb_len=20, bb_mult=2.0, rank_len=100, sqz_thresh=20.0, sqz_win=5,
-         atr_len=14, stop_mult=2.0)
+P = dict(_rule.PARAMS)
 
 
 def build_signals(df, start_ms, end_ms):
     """df: columns ts(ms), Open, High, Low, Close, Volume. Returns copy with
-    long_sig / short_sig / atr / in_win columns (Pine-equivalent)."""
-    close = df["Close"]
-    basis, upper, lower = ind.bollinger(close, P["bb_len"], P["bb_mult"])
-    width = ind.bb_width_pct(basis, upper, lower)
-    rank = ind.percentrank_prev(width, P["rank_len"])
-    sq_recent = rank.rolling(P["sqz_win"]).min().shift(1) < P["sqz_thresh"]
+    long_sig / short_sig / atr / in_win columns (Pine-equivalent).
+
+    Kept to the original four added columns on purpose: backtesting.py's
+    Backtest() takes this frame as its data, and the plugin's extra display
+    columns (band levels, per-bar reason text) have no business in there.
+    """
+    raw = _rule.build(df.copy(), P)
     in_win = (df["ts"] >= start_ms) & (df["ts"] <= end_ms)
     out = df.copy()
-    out["long_sig"] = ind.crossover(close, upper) & sq_recent & in_win
-    out["short_sig"] = ind.crossunder(close, lower) & sq_recent & in_win
-    out["atr"] = ind.atr_rma(df["High"], df["Low"], close, P["atr_len"])
+    out["long_sig"] = raw["long_sig"].to_numpy(dtype=bool) & in_win.to_numpy()
+    out["short_sig"] = raw["short_sig"].to_numpy(dtype=bool) & in_win.to_numpy()
+    out["atr"] = raw["atr"].to_numpy(dtype=float)
     out["in_win"] = in_win
     return out
 

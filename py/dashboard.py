@@ -300,7 +300,14 @@ def _trigger_status(con, symbol):
     any of those ranks is missing -- mirrored here by requiring a full window
     of non-null ranks. Band distances are measured against the latest CLOSED
     bar's own bands; the next bar's bands will differ slightly, so this is a
-    display-layer estimate, labeled as such in the frontend."""
+    display-layer estimate, labeled as such in the frontend.
+
+    Squeeze-specific by construction: it mirrors THAT gate's formula. Under
+    another strategy plugin the params simply are not there and this returns
+    None, so the panel shows nothing rather than a number belonging to a
+    rule that is not running (the generic version is the next step)."""
+    if "sqz_win" not in pl.P or "sqz_thresh" not in pl.P:
+        return None
     win = int(pl.P["sqz_win"])
     thresh = float(pl.P["sqz_thresh"])
     cur = con.execute(
@@ -494,6 +501,7 @@ def api_summary():
 
     return dict(
         announcement=pl.ANNOUNCEMENT,
+        strategy=pl.strategies.describe(pl.STRATEGY, pl.P),
         cost_assumption=dict(
             fee_per_side=pl.FEE, slippage_ticks=2, tick_sizes=pl.TICKS,
             funding="binanceusdm 實際資金費率逐期結算（多方付正費率、空方收）",

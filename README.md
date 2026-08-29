@@ -29,29 +29,63 @@
 
 ## 換上你的指標與參數
 
-整條管線——重放、帳目、進場監視、代管卡、策略日誌——都跟著這幾個地方走：
+規則是**外掛**：一支 Python 檔放進 `py/strategies/`，在 [config.json](config.json) 指名它就換完了。
+引擎、成本模型、出場管理、帳本、儀表板都不用動。
+
+```python
+# py/strategies/my_rule.py
+import indicators as ind
+
+NAME = "我的規則"
+PARAMS = dict(fast=20, slow=60, atr_len=14, stop_mult=2.5)
+
+def build(df, params):
+    close = df["Close"]
+    fast = close.ewm(span=params["fast"], adjust=False).mean()
+    slow = close.ewm(span=params["slow"], adjust=False).mean()
+    out = df.copy()
+    out["long_sig"] = ind.crossover(fast, slow)      # 這根收盤要做多
+    out["short_sig"] = ind.crossunder(fast, slow)    # 這根收盤要做空
+    out["stop_dist"] = params["stop_mult"] * ind.atr_rma(
+        df["High"], df["Low"], close, params["atr_len"])   # 停損放多遠
+    return out
+```
+
+```json
+"strategy": { "module": "my_rule", "params": { "fast": 12 } }
+```
+
+**你的規則只回答兩件事**：這根收盤要不要進場、停損放多遠。
+起算日窗口、部位大小、成交價、手續費、滑價、資金費率、追蹤停損、停滯出場、保本鎖、
+寫帳與呈現，全部是框架的事。
 
 | 想改什麼 | 改哪裡 |
 |---|---|
-| **參數** | [`py/strategy_squeeze.py`](py/strategy_squeeze.py) 開頭的 `P` 字典：布林長度/倍數、擠壓門檻、ATR 長度、停損倍數 |
-| **進場規則（指標）** | 同檔的 `build_signals(df, start_ms, end_ms)`：吃一個含 `ts/Open/High/Low/Close/Volume` 的 DataFrame，回傳加上 `long_sig / short_sig / atr / in_win` 四欄的副本。換掉這個函式，儀表板的進場監視就在盯你的條件 |
-| **出場規則** | [`py/paper_loop.py`](py/paper_loop.py) 的 `STALL_BARS / STALL_GAIN / BE_TRIGGER`（停滯出場、保本鎖），追蹤停損倍數在 `P["stop_mult"]` |
-| **幣種與資金** | 根目錄 [config.json](config.json)（見下方說明），不用動程式碼 |
+| **進場規則（指標）** | 新增 `py/strategies/你的規則.py`，見 [docs/STRATEGY_API.md](docs/STRATEGY_API.md)；可照抄逐行中文註解的 [`ema_cross.py`](py/strategies/ema_cross.py) |
+| **參數** | [config.json](config.json) 的 `strategy.params`，或改你自己檔案裡的 `PARAMS` 預設值 |
+| **出場規則** | [config.json](config.json) 的 `exits`：停滯出場 `stall_bars/stall_gain`、保本鎖 `be_trigger`（設 `null` 停用）；追蹤停損距離由你的 `stop_dist` 決定 |
+| **幣種與資金** | [config.json](config.json)（見下方說明），不用動程式碼 |
 
 改完任何規則或參數後，**刪掉 `data/paper.db` 再跑一次 tick**——全量重放會用新規則從起算日重建整本帳，新舊假設不會混在一起。
 
 一個過來人的小建議（不強制）：先把參數定下來、跑滿一段預先決定的期間，再回頭看結果。
 邊看淨值邊轉參數，得到的通常不是策略，是過擬合的曲線。
 
-## 工作台內建的三件事
+## 工作台內建的四件事
 
-模擬最容易騙自己的三個地方，直接做進架構裡：
+模擬最容易騙自己的四個地方，直接做進架構裡：
 
-1. **成本誠實**——手續費 0.05%/邊（幣安 VIP0 taker）、按各幣真實跳動單位算滑價、
+1. **規則不准偷看未來**——每次跑之前，系統會把最後幾根 K 棒拿掉重算你的規則，
+   要求前面那些棒的訊號**一模一樣**。不一樣，就代表它對某一根棒的判斷取決於當時
+   還沒收盤的資料——今天的新資料會偷偷改寫昨天的歷史。這種規則回測一定漂亮、
+   實盤一定重現不了（`shift(-1)`、`rolling(center=True)`、用整段序列的最大值正規化，
+   都是常見成因）。抓到就中止，並告訴你是哪一根棒開始不對，帳本一個字都不會動。
+
+2. **成本誠實**——手續費 0.05%/邊（幣安 VIP0 taker）、按各幣真實跳動單位算滑價、
    資金費率取實際歷史值逐期結算（做多付正費率、做空收），不是拍腦袋的固定成本。
-2. **帳目可重現**——每次都從部署起點全量重放。同樣的資料必然得到同樣的帳；
+3. **帳目可重現**——每次都從部署起點全量重放。同樣的資料必然得到同樣的帳；
    改了規則就刪帳重來，永遠知道眼前這條淨值曲線是哪一組假設跑出來的。
-3. **看板唯讀**——儀表板以 SQLite 唯讀模式（`mode=ro`）連資料庫，整個網頁沒有任何
+4. **看板唯讀**——儀表板以 SQLite 唯讀模式（`mode=ro`）連資料庫，整個網頁沒有任何
    能改變系統狀態的按鈕。看板是觀測窗，不是控制台。
 
 ## 儀表板功能
@@ -61,7 +95,9 @@
 - **K 線圖**：幣安 WSS 即時行情（斷線自動降級輪詢）、15M/1H/4H/1D、
   布林規則軌道（4H 取規則棒實際數值；其他週期為同參數顯示輔助）、
   EMA/VOL/RSI/MACD/KDJ 開關、趨勢線/水平線/斐波那契/手繪畫線工具
-- **進場監視**：每個幣離**你的進場條件**多遠——軌道座標尺＋閘門量表＋前 5 棒排名
+- **進場監視**：每個幣離進場條件多遠——軌道座標尺＋閘門量表＋前 5 棒排名
+  （目前是內建擠壓規則專屬的視圖；換成自己的規則時這張卡會註明並留白，
+  而不是拿別條規則的數字充數）
 - **機器人代管中**：**你的自動出場規則**即時狀態（追蹤停損、停滯出場倒數、保本鎖）
 - **策略日誌**：進出場時間軸，靜默棒自動壓縮成統計行，可展開
 - **成交紀錄**：含數量、手續費、資金費用與每筆的中文白話明細
@@ -95,7 +131,9 @@ py/.venv/bin/pip install -r py/requirements.txt
   ],
   "paper_epoch": "2026-08-01 00:00",
   "cash0": 10000.0,
-  "fee": 0.0005
+  "fee": 0.0005,
+  "strategy": { "module": "squeeze_breakout", "params": {} },
+  "exits": { "stall_bars": 6, "stall_gain": 0.0, "be_trigger": 1.0 }
 }
 ```
 
@@ -106,6 +144,9 @@ py/.venv/bin/pip install -r py/requirements.txt
 | `paper_epoch` | 紙上帳的起算時點（UTC）。建議設在過去 2~4 週，儀表板一開就有內容 |
 | `cash0` | 每個幣各自獨立的起始資金（互不撥款） |
 | `fee` | 單邊手續費率。0.0005 = 幣安 VIP0 taker；有 BNB 折扣可改 0.00045 |
+| `strategy.module` | `py/strategies/` 底下的檔名（不含 `.py`）。預設 `squeeze_breakout`，另附範例 `ema_cross` |
+| `strategy.params` | 覆寫該規則的參數。**打錯參數名會直接報錯**，不會安靜地當作沒看到 |
+| `exits` | 框架層出場規則：停滯出場、保本鎖。設成 `null` 即停用該項 |
 
 > **改動任何設定後，請刪除 `data/paper.db` 再跑一次 tick**——全量重放會用新設定重建整本帳。
 > 時間週期固定 4H（資金費率結算網格與規則語義都建立在 4H 收盤上），這是刻意的限制。
@@ -159,12 +200,12 @@ FastAPI + 單檔前端（127.0.0.1:8787，唯讀儀表板）
 |---|---|
 | `py/paper_loop.py` | 例行 tick：抓資料 → 重放 → 寫帳 → 健康檢查 |
 | `py/engine.py` | 逐棒回測引擎（進出場時序對齊 Pine 語義，含出場規則擴充） |
-| `py/strategy_squeeze.py` | 示範預設規則：布林擠壓突破（**換成你的規則就從這裡**） |
+| `py/strategies/` | **規則外掛放這裡**：`squeeze_breakout.py`（內建示範）、`ema_cross.py`（可照抄的範例）、`__init__.py`（契約與三項檢查） |
 | `py/dashboard.py` | 唯讀 API（FastAPI） |
 | `py/static/index.html` | 儀表板前端（單檔，無建置步驟） |
 | `py/fetch_*.py` | K 棒／資金費率／未平倉量收集器（可斷點續傳） |
 | `tools/export_trades.py` | xlsx 帳本匯出 |
-| `py/tests/` | 84 個測試，合成資料、不需網路 |
+| `py/tests/` | 102 個測試，合成資料、不需網路 |
 
 ## 測試
 
@@ -172,8 +213,9 @@ FastAPI + 單檔前端（127.0.0.1:8787，唯讀儀表板）
 py\.venv\Scripts\python -m pytest py\tests -q
 ```
 
-84 個測試全部使用合成資料與暫存資料庫，不碰網路、不碰你的真實帳目。
-CI（GitHub Actions）在每次 push 自動跑同一套。
+102 個測試全部使用合成資料與暫存資料庫，不碰網路、不碰你的真實帳目。
+其中包含一組刻意寫壞的假規則（偷看未來、不具決定性、改動 K 棒價格），用來證明
+那三項檢查真的會擋下來。CI（GitHub Actions）在每次 push 自動跑同一套。
 
 ## 出身與致謝
 

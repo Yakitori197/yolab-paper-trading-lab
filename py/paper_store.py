@@ -113,9 +113,15 @@ def upsert_trades(con, symbol, trades_df):
 
 def upsert_signals(con, symbol, rows):
     """rows: iterable of dicts with keys ts, close, upper, lower, width_rank,
-    sqz_ok, long_sig, short_sig, position, stop_disp, action, reason."""
+    sqz_ok, long_sig, short_sig, position, stop_disp, action, reason.
+
+    upper/lower/width_rank/sqz_ok belong to the built-in squeeze rule; a
+    different strategy plugin leaves them as None and they are stored NULL.
+    sqz_ok in particular must NOT collapse to 0 there -- 0 would read as
+    "the squeeze gate was closed", a claim about a rule that never ran."""
     data = [(symbol, int(r["ts"]), r["close"], r["upper"], r["lower"], r["width_rank"],
-              int(bool(r["sqz_ok"])), int(bool(r["long_sig"])), int(bool(r["short_sig"])),
+              None if r["sqz_ok"] is None else int(bool(r["sqz_ok"])),
+              int(bool(r["long_sig"])), int(bool(r["short_sig"])),
               r["position"], r["stop_disp"], r["action"], r["reason"])
              for r in rows]
     con.executemany(

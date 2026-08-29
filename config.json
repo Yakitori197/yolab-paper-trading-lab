@@ -1,5 +1,5 @@
 {
-  "_說明": "紙上交易設定檔。symbols 可自由增減(需為幣安現貨交易對;若要結算資金費率,該幣也要有 USDT-M 永續)。tick 為幣安 USDS-M 期貨的最小跳動單位,用於滑價模擬。改動任何值後請刪除 data/paper.db 重新起算,避免新舊假設混在同一本帳。",
+  "_說明": "紙上交易設定檔。symbols 可自由增減(需為幣安現貨交易對;若要結算資金費率,該幣也要有 USDT-M 永續)。tick 為幣安 USDS-M 期貨的最小跳動單位,用於滑價模擬。strategy.module 指向 py/strategies/ 底下的檔名(不含 .py),strategy.params 覆寫該策略的參數(寫錯的參數名會直接報錯,不會靜默忽略);exits 是框架層的出場規則,設為 null 即停用該項。改動任何值後請刪除 data/paper.db 重新起算,避免新舊假設混在同一本帳。",
   "symbols": [
     { "symbol": "BTC/USDT", "tick": 0.1 },
     { "symbol": "ETH/USDT", "tick": 0.01 },
@@ -7,5 +7,14 @@
   ],
   "paper_epoch": "2026-08-01 00:00",
   "cash0": 10000.0,
-  "fee": 0.0005
+  "fee": 0.0005,
+  "strategy": {
+    "module": "squeeze_breakout",
+    "params": {}
+  },
+  "exits": {
+    "stall_bars": 6,
+    "stall_gain": 0.0,
+    "be_trigger": 1.0
+  }
 }

@@ -333,8 +333,8 @@
   <div class="stripe"></div>
   <div class="body">
     <div class="head">
-      <span class="mode">工程驗證模式</span>
-      <span class="line">squeeze 佔位規則已知無邊際（D-008），模擬損益不作策略論證（D-013）</span>
+      <span class="mode" id="banner-mode">模擬帳戶</span>
+      <span class="line" id="banner-line">載入中…</span>
     </div>
     <div class="sub text-muted"><span id="banner-cost"></span>　｜　待辦：待實際費率替換（CAL-002 佔位值）　｜　唯讀看板，無下單與參數修改路徑</div>
   </div>
@@ -345,6 +345,7 @@
     <div class="title">
       <span class="name">交易儀表板</span>
       <span class="tag tag-outline">PAPER · 127.0.0.1:8787</span>
+      <span class="tag tag-neutral" id="rule-tag">規則載入中…</span>
     </div>
     <div class="seg" id="tabs"></div>
     <div id="board-right">
@@ -487,7 +488,7 @@
         <span class="s">離進場條件多遠</span>
         <span class="tag tag-outline" id="trigger-overall" style="margin-left:auto">—</span>
       </div>
-      <p class="text-muted" style="font-size:11.5px;margin:3px 0 2px;line-height:1.6">兩條件要在同一根 4H 收盤棒同時成立：擠壓閘門開（前 5 棒寬度排名最低值 &lt; 20）＋收盤突破軌道。</p>
+      <p class="text-muted" style="font-size:11.5px;margin:3px 0 2px;line-height:1.6" id="trigger-note">兩條件要在同一根 4H 收盤棒同時成立：擠壓閘門開（前 5 棒寬度排名最低值 &lt; 20）＋收盤突破軌道。</p>
       <div id="trigger-rows"></div>
       <p class="foot-note" style="padding:9px 0 0;margin-top:13px">距離以最新收盤棒估算，下一棒軌道會略有變動。</p>
     </div>
@@ -549,6 +550,9 @@
 let SYMBOLS = [];
 let CASH0 = 10000;
 let TOTAL0 = 30000;
+// which rule is running, as reported by the backend (config.json decides).
+// Nothing about a specific rule is hardcoded in this file any more.
+let STRATEGY = null;
 let activeSymbol = null;
 let priceTf = "4h";
 let lastSummary = null;
@@ -655,6 +659,21 @@ async function loadSummary() {
   if (changed) buildTabs();
 
   document.getElementById("banner-cost").textContent = s.cost_note;
+
+  // banner text and rule tag mirror whichever strategy plugin is loaded
+  STRATEGY = s.strategy || null;
+  const ann = s.announcement || "";
+  const annParts = ann.match(/^\[([^\]]*)\]\s*([\s\S]*)$/);
+  document.getElementById("banner-mode").textContent = annParts ? annParts[1] : "模擬帳戶";
+  document.getElementById("banner-line").textContent = annParts ? annParts[2] : ann;
+  document.getElementById("rule-tag").textContent =
+    STRATEGY && STRATEGY.name ? `規則 · ${STRATEGY.name}` : "規則 · 未知";
+  const trigNote = document.getElementById("trigger-note");
+  if (trigNote && STRATEGY && STRATEGY.module && STRATEGY.module !== "squeeze_breakout") {
+    const label = STRATEGY.watch && STRATEGY.watch.label ? `（${STRATEGY.watch.label}）` : "";
+    trigNote.textContent = `目前跑的是「${STRATEGY.name}」${label}。`
+      + "內建擠壓規則專屬的閘門數字不屬於這條規則，因此不顯示。";
+  }
 
   const healthEl = document.getElementById("sys-health");
   healthEl.classList.toggle("fail", !s.health.ok);
@@ -2320,6 +2339,14 @@ function renderTriggerPanel(s) {
   overall.style.marginLeft = "auto";
 }
 
+// the trailing stop's distance comes from the rule (stop_dist per bar). Rules
+// that express it as a multiple of ATR say so; anything else stays generic
+// rather than claiming an ATR multiple the rule never used.
+function trailLabel() {
+  const mult = STRATEGY && STRATEGY.params ? STRATEGY.params.stop_mult : null;
+  return (mult === null || mult === undefined) ? "追蹤停損（規則指定距離）" : `${+mult}×ATR 追蹤停損`;
+}
+
 function renderManagedPanel(s) {
   const wrap = document.getElementById("managed-rows");
   if (!wrap) return;
@@ -2335,7 +2362,7 @@ function renderManagedPanel(s) {
 
   if (!holders.length) {
     wrap.innerHTML =
-      ruleRow("待命", "tag-outline", "2×ATR 追蹤停損", "隨行情單向收緊，只緊不鬆") +
+      ruleRow("待命", "tag-outline", trailLabel(), "隨行情單向收緊，只緊不鬆") +
       ruleRow("待命", "tag-outline", `停滯出場 · 第 ${cfg.stall_bars} 棒起`,
         `進場後第 ${cfg.stall_bars} 棒起逐棒檢查，收盤未獲利（門檻 ${fmtNum(cfg.stall_gain, 1)}）即以收盤平倉`) +
       ruleRow("待命", "tag-outline", `保本鎖 · ${fmtNum(cfg.be_trigger, 0)}×R`,
@@ -2380,7 +2407,8 @@ function renderManagedPanel(s) {
     const body = document.createElement("div");
     body.style.marginTop = "8px";
     body.innerHTML =
-      ruleRow("追蹤中", "tag-accent", `追蹤停損 ${fmtNum(pos.stop, 2)}${distStr}`, "2×ATR 隨行情單向收緊，只緊不鬆") +
+      ruleRow("追蹤中", "tag-accent", `追蹤停損 ${fmtNum(pos.stop, 2)}${distStr}`,
+        `${trailLabel()}，隨行情單向收緊，只緊不鬆`) +
       ruleRow(stallTag, stallCls, `停滯出場 · 第 ${mg.stall_bars} 棒起`, stallDesc) +
       ruleRow(beTag, beCls, `保本鎖 · ${fmtNum(mg.be_trigger, 0)}×R`, beDesc);
     wrap.appendChild(body);

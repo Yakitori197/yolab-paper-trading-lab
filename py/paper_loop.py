@@ -1,8 +1,10 @@
-"""E1 paper-trading tick loop -- engineering validation only, NOT strategy
-proof. squeeze is a known-no-edge placeholder rule (D-008); simulated P&L
-here does not argue for deployment (D-013). Reuses strategy_squeeze.P /
-.build_signals(), engine.run(), fetch_klines.fetch_series(), db.py,
-indicators.py verbatim. market.db is only ever written to via fetch_klines'
+"""Paper-trading tick loop -- engineering validation only, NOT strategy
+proof. The built-in squeeze is a known-no-edge placeholder rule (D-008);
+simulated P&L here does not argue for deployment (D-013), and neither does
+anyone else's plugin. The entry rule comes from strategies/ (see the
+"strategy plugin" block below and strategies/__init__.py for the contract);
+engine.run(), fetch_klines.fetch_series(), db.py and indicators.py are
+reused verbatim. market.db is only ever written to via fetch_klines'
 fetch_series() and fetch_futures' fetch_funding_series() resumable paths;
 all paper state goes to the separate data/paper.db via paper_store.py.
 
@@ -42,7 +44,8 @@ import db
 import engine
 import indicators as ind
 import paper_store as ps
-from strategy_squeeze import P, build_signals
+import strategies
+from strategy_squeeze import build_signals
 
 # ---- user config (repo-root config.json) -----------------------------------
 # Symbols / ticks / epoch / cash / fee are read from config.json when it
@@ -86,18 +89,49 @@ FUNDING_MS = 8 * 3600 * 1000          # standard Binance funding interval
 FUNDING_EXCHANGE = "binanceusdm"      # funding rows' exchange key in market.db
 FUNDING_START = "2020-10-01"          # matches fetch_futures.FUNDING_START
 
-# Batch #8 deployed exit config (docs/BATCH_PLAN 批次 #8, judged 2026-08-26):
-# V1 stall exit + V3 breakeven floor each passed the frozen improvement rule
-# on both W1 and W2, and the V1+V3 combination was re-verified before
-# deployment (V1 chosen over V2 by the registered metric -- mean net
-# improvement on the primary window W2). process_symbol() itself defaults to
-# the legacy exit config (all None) so the synthetic-series tests' direct
-# engine.run comparisons stay valid verbatim; only run_tick() passes these.
-STALL_BARS = 6      # V1: eligible from 6 bars after entry ...
-STALL_GAIN = 0.0    # ... exit any bar whose close-based signed gain is < 0*R0
-BE_TRIGGER = 1.0    # V3: floor the stop at entry once close-gain >= 1.0*R0
+# ---- strategy plugin -------------------------------------------------------
+# Which rule decides the entries, and with what parameters. config.json's
+# "strategy": {"module": ..., "params": {...}} picks any file in strategies/;
+# the default is the built-in squeeze breakout, so an untouched config
+# reproduces the original deployment exactly. An unknown module name or an
+# unknown parameter key raises here rather than silently doing nothing --
+# see strategies/__init__.py for the whole contract.
+BUILTIN_STRATEGY = "squeeze_breakout"
+_CFG_STRATEGY = _CFG.get("strategy") or {}
+STRATEGY_NAME = str(_CFG_STRATEGY.get("module", BUILTIN_STRATEGY))
+STRATEGY = strategies.load(STRATEGY_NAME)
+P = strategies.resolve_params(STRATEGY, _CFG_STRATEGY.get("params"))
 
-ANNOUNCEMENT = "[工程驗證模式] squeeze 佔位規則已知無邊際（D-008），模擬損益不作策略論證（D-013）"
+# Exit config: batch #8's deployed values are the defaults (V1 stall exit +
+# V3 breakeven floor, judged 2026-08-26 on the built-in rule), overridable
+# per-deployment via config.json's "exits" block -- null disables one.
+# process_symbol() itself still defaults to the legacy exit config (all None)
+# so the synthetic-series tests' direct engine.run comparisons stay valid
+# verbatim; only run_tick() passes these.
+_CFG_EXITS = _CFG.get("exits") or {}
+
+
+def _cfg_num(block, key, default, cast):
+    val = block.get(key, default)
+    return None if val is None else cast(val)
+
+
+STALL_BARS = _cfg_num(_CFG_EXITS, "stall_bars", 6, int)      # eligible from N bars after entry ...
+STALL_GAIN = _cfg_num(_CFG_EXITS, "stall_gain", 0.0, float)  # ... exit if close-gain < N*R0
+BE_TRIGGER = _cfg_num(_CFG_EXITS, "be_trigger", 1.0, float)  # floor the stop at entry at +N*R0
+
+def _announcement():
+    """Names the rule that is actually running. The built-in one keeps its
+    original disclosure -- it is a known-no-edge placeholder (D-008) and its
+    simulated P&L argues nothing (D-013); a user's own plugin gets the
+    general form of the same warning."""
+    label = f"{getattr(STRATEGY, 'NAME', STRATEGY_NAME)}（{STRATEGY_NAME}）"
+    if STRATEGY_NAME == BUILTIN_STRATEGY:
+        return f"[模擬帳戶] 規則：{label}－內建示範規則，已知無邊際（D-008），模擬損益不作策略論證（D-013）"
+    return f"[模擬帳戶] 規則：{label}－模擬損益只反映這條規則本身，不構成任何策略論證"
+
+
+ANNOUNCEMENT = _announcement()
 
 
 def epoch_ms():
@@ -223,14 +257,13 @@ def load_funding(con, symbol, start_ms):
 
 
 def compute_signal_detail(df, start_ms, end_ms, params):
-    """Independent re-derivation of strategy_squeeze.build_signals()'s exact
-    formula, using ONLY indicators.py's exposed primitives + the imported P
-    dict -- build_signals() itself never returns the intermediate
-    upper/lower/width_rank/sqz_ok values a detail table needs, so they must
-    be recomputed here rather than modifying strategy_squeeze.py. The
-    long_sig/short_sig columns produced here are cross-checked bar-by-bar
-    against build_signals()'s own output every tick (see process_symbol);
-    any divergence aborts before anything is written to paper.db."""
+    """The built-in squeeze rule written a SECOND time, independently, from
+    indicators.py's exposed primitives only. Its whole purpose is to
+    disagree: process_symbol() cross-checks it bar-by-bar against what
+    strategies/squeeze_breakout.py produced and refuses to write anything to
+    paper.db on the first divergence. Only meaningful for the built-in rule
+    -- a user's own plugin cannot be asked to implement itself twice, and
+    gets strategies.check_replay_stability()'s generic proof instead."""
     close = df["Close"]
     basis, upper, lower = ind.bollinger(close, params["bb_len"], params["bb_mult"])
     width = ind.bb_width_pct(basis, upper, lower)
@@ -257,6 +290,13 @@ def _isnan(x):
     return x is None or (isinstance(x, float) and x != x)
 
 
+def _num(arr, i):
+    """Storable float from an optional column (None array -> NULL)."""
+    if arr is None:
+        return None
+    return None if _isnan(float(arr[i])) else float(arr[i])
+
+
 def build_signal_rows(symbol, detail_df, trades_df, cash0, fee, epoch, funding_rates=None,
                       be_trigger=None):
     """Single pass over detail_df (ts-ordered), cross-referencing
@@ -275,19 +315,26 @@ def build_signal_rows(symbol, detail_df, trades_df, cash0, fee, epoch, funding_r
     Only bars with ts >= epoch are written (warmup bars are indicator
     scaffolding only, per PAPER_EPOCH design -- no trade can occur there
     since build_signals()'s in_win gate already excludes them)."""
+    def _opt(col, dtype=float):
+        """Columns only the built-in squeeze rule produces. A different
+        plugin simply leaves them out and they are stored as NULL -- the
+        dashboard then has nothing to draw for them, which is the honest
+        outcome, rather than showing another rule's numbers."""
+        return detail_df[col].to_numpy(dtype=dtype) if col in detail_df.columns else None
+
     ts = detail_df["ts"].to_numpy()
     open_ = detail_df["Open"].to_numpy(dtype=float)
     close = detail_df["Close"].to_numpy(dtype=float)
-    upper = detail_df["upper"].to_numpy(dtype=float)
-    lower = detail_df["lower"].to_numpy(dtype=float)
-    width_rank = detail_df["width_rank"].to_numpy(dtype=float)
-    sqz_ok = detail_df["sqz_ok"].to_numpy(dtype=bool)
+    upper = _opt("upper")
+    lower = _opt("lower")
+    width_rank = _opt("width_rank")
+    sqz_ok = _opt("sqz_ok", bool)
     long_sig = detail_df["long_sig"].to_numpy(dtype=bool)
     short_sig = detail_df["short_sig"].to_numpy(dtype=bool)
-    cross_up = detail_df["cross_up"].to_numpy(dtype=bool)
-    cross_dn = detail_df["cross_dn"].to_numpy(dtype=bool)
     in_win = detail_df["in_win"].to_numpy(dtype=bool)
-    atr = detail_df["atr"].to_numpy(dtype=float)
+    stop_dist = detail_df["stop_dist"].to_numpy(dtype=float) if "stop_dist" in detail_df.columns \
+        else P.get("stop_mult", 2.0) * detail_df["atr"].to_numpy(dtype=float)
+    rule_reason = _opt("reason", object)
     n = len(ts)
 
     entries_by_ts = {}
@@ -345,28 +392,31 @@ def build_signal_rows(symbol, detail_df, trades_df, cash0, fee, epoch, funding_r
             open_pos = dict(direction=r.direction, qty=float(r.qty), entry_px=float(r.entry_px),
                               entry_ts=t, entry_i=i, entry_fee=entry_fee, funding_paid=0.0,
                               stop_disp=None, be_armed=False,
-                              r0=None if _isnan(atr[i]) else 2.0 * float(atr[i]))
+                              r0=None if _isnan(stop_dist[i]) else float(stop_dist[i]))
 
         if action == "hold":
+            # 窗前暖機 and 已持倉同向 are framework facts (the epoch window and
+            # the open position), so they stay here; everything else is the
+            # rule explaining itself through the plugin's `reason` column.
             if not in_win[i]:
                 reason = "窗前暖機"
-            elif not sqz_ok[i]:
-                reason = "rank 未低於 20"
-            elif not cross_up[i] and not cross_dn[i]:
-                reason = "未突破上/下軌"
-            elif (cross_up[i] and position_before == "long") or (cross_dn[i] and position_before == "short"):
+            elif (long_sig[i] and position_before == "long") or \
+                    (short_sig[i] and position_before == "short"):
                 reason = "已持倉同向"
+            elif rule_reason is not None and rule_reason[i] is not None \
+                    and rule_reason[i] == rule_reason[i]:
+                reason = str(rule_reason[i])
             else:
                 reason = "無訊號"
 
         stop_disp = None
-        if open_pos is not None and not _isnan(atr[i]):
+        if open_pos is not None and not _isnan(stop_dist[i]):
             if open_pos["direction"] == "long":
-                candidate = close[i] - 2.0 * atr[i]
+                candidate = close[i] - stop_dist[i]
                 open_pos["stop_disp"] = candidate if open_pos["stop_disp"] is None \
                     else max(open_pos["stop_disp"], candidate)
             else:
-                candidate = close[i] + 2.0 * atr[i]
+                candidate = close[i] + stop_dist[i]
                 open_pos["stop_disp"] = candidate if open_pos["stop_disp"] is None \
                     else min(open_pos["stop_disp"], candidate)
             # breakeven floor mirror of engine.py's 2b (batch #8 V3): arm on
@@ -394,10 +444,9 @@ def build_signal_rows(symbol, detail_df, trades_df, cash0, fee, epoch, funding_r
         if t >= epoch:
             signal_rows.append(dict(
                 ts=t, close=float(close[i]),
-                upper=None if _isnan(upper[i]) else float(upper[i]),
-                lower=None if _isnan(lower[i]) else float(lower[i]),
-                width_rank=None if _isnan(width_rank[i]) else float(width_rank[i]),
-                sqz_ok=bool(sqz_ok[i]), long_sig=bool(long_sig[i]), short_sig=bool(short_sig[i]),
+                upper=_num(upper, i), lower=_num(lower, i), width_rank=_num(width_rank, i),
+                sqz_ok=None if sqz_ok is None else bool(sqz_ok[i]),
+                long_sig=bool(long_sig[i]), short_sig=bool(short_sig[i]),
                 position=open_pos["direction"] if open_pos else None,
                 stop_disp=stop_disp, action=action, reason=reason,
             ))
@@ -480,10 +529,13 @@ def health_check(con_market, con_paper, epoch, consistency_results=None):
                 df = load_df(con_market, symbol, epoch - WARMUP_BARS * STEP_MS)
                 if not df.empty:
                     latest_ts = int(df["ts"].max())
-                    sig_df = build_signals(df, epoch, latest_ts)
-                    detail_df = compute_signal_detail(df, epoch, latest_ts, P)
-                    assert_signal_consistency(symbol, df, sig_df, detail_df)
-            except RuntimeError as e:
+                    frame = strategies.build_frame(STRATEGY, df, P, epoch, latest_ts)
+                    strategies.check_replay_stability(STRATEGY, df, P, epoch, latest_ts,
+                                                      reference=frame)
+                    if STRATEGY_NAME == BUILTIN_STRATEGY:
+                        assert_signal_consistency(
+                            symbol, df, compute_signal_detail(df, epoch, latest_ts, P), frame)
+            except RuntimeError as e:      # StrategyError is a RuntimeError
                 reasons.append(f"一致性自證未過（{e}）")
 
         ok = len(reasons) == 0
@@ -505,14 +557,22 @@ def process_symbol(con_paper, symbol, df, epoch, cash0=CASH0, fee=FEE, tick=None
     if tick is None:
         tick = tick_for(symbol)
     latest_ts = int(df["ts"].max())
-    sig_df = build_signals(df, epoch, latest_ts)
-    detail_df = compute_signal_detail(df, epoch, latest_ts, P)
-    assert_signal_consistency(symbol, df, sig_df, detail_df)
+    frame = strategies.build_frame(STRATEGY, df, P, epoch, latest_ts)
+    # generic self-proof, run for every rule on every tick: the same data
+    # twice must give the same answer, and dropping the newest bars must
+    # never change the verdict on the older ones (see strategies/__init__).
+    strategies.check_replay_stability(STRATEGY, df, P, epoch, latest_ts, reference=frame)
+    if STRATEGY_NAME == BUILTIN_STRATEGY:
+        # the built-in rule additionally keeps its independent second
+        # implementation (compute_signal_detail, written straight from
+        # indicators.py's primitives) and refuses to store anything if the
+        # two ever disagree on a single bar
+        assert_signal_consistency(symbol, df, compute_signal_detail(df, epoch, latest_ts, P), frame)
 
-    metrics, trades_df = engine.run(sig_df, cash=cash0, fee=fee, tick=tick, funding=funding_rates,
+    metrics, trades_df = engine.run(frame, cash=cash0, fee=fee, tick=tick, funding=funding_rates,
                                     stall_bars=stall_bars, stall_gain=stall_gain,
                                     be_trigger=be_trigger)
-    signal_rows, equity_rows, state = build_signal_rows(symbol, detail_df, trades_df, cash0, fee, epoch,
+    signal_rows, equity_rows, state = build_signal_rows(symbol, frame, trades_df, cash0, fee, epoch,
                                                         funding_rates=funding_rates,
                                                         be_trigger=be_trigger)
 
