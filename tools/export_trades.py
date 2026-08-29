@@ -168,41 +168,11 @@ def write_ledger(rows, path=LEDGER_PATH):
         w.writerows(rows)
 
 
-def compute_stats(closed_trades):
-    """closed_trades: list of dicts with a 'pnl' key (fees/funding keys
-    optional -- E13 cost totals default to 0 when absent, e.g. in hand-built
-    test fixtures). Win/loss split purely by sign (pnl>0 wins, pnl<=0
-    losses). Pure function -- no I/O."""
-    n = len(closed_trades)
-    wins = [t for t in closed_trades if t["pnl"] > 0]
-    losses = [t for t in closed_trades if t["pnl"] <= 0]
-    gross_profit = sum(t["pnl"] for t in wins)
-    gross_loss = -sum(t["pnl"] for t in losses)
-    net = sum(t["pnl"] for t in closed_trades)
-    win_rate = (len(wins) / n * 100.0) if n else 0.0
-    avg_win = (gross_profit / len(wins)) if wins else 0.0
-    avg_loss = (gross_loss / len(losses)) if losses else 0.0
-    fees_total = sum(t.get("fees") or 0.0 for t in closed_trades)
-    funding_total = sum(t.get("funding") or 0.0 for t in closed_trades)
-    return dict(n=n, n_win=len(wins), n_loss=len(losses), win_rate=win_rate,
-                avg_win=avg_win, avg_loss=avg_loss, gross_profit=gross_profit,
-                gross_loss=gross_loss, net=net, fees_total=fees_total,
-                funding_total=funding_total)
-
-
-def max_drawdown_pct(equity_rows, seed_peak):
-    """equity_rows: ascending [(ts, equity), ...]. Peak seeded at seed_peak
-    (the account's starting capital) so a drawdown from the very first bar
-    is still captured, matching engine.py's own max_dd convention."""
-    peak = seed_peak
-    max_dd = 0.0
-    for _ts, eq in equity_rows:
-        if eq > peak:
-            peak = eq
-        dd = (eq / peak - 1.0) * 100.0 if peak > 0 else 0.0
-        if dd < max_dd:
-            max_dd = dd
-    return max_dd
+# compute_stats() and max_drawdown_pct() moved verbatim to py/perf.py so the
+# dashboard's 策略表現 card and this workbook quote the same numbers from the
+# same definitions. Re-exported here: every existing caller (and every test)
+# keeps addressing them as export_trades.compute_stats / .max_drawdown_pct.
+from perf import compute_stats, max_drawdown_pct  # noqa: E402  (after sys.path setup)
 
 
 def rolling_max_drawdown_pct(equities):

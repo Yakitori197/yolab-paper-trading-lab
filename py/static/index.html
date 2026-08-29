@@ -181,6 +181,28 @@
     margin: 0; padding: 11px 18px; border-top: 1px solid var(--color-divider); line-height: 1.6;
   }
 
+  /* strategy performance card */
+  .perf-grid { display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid var(--color-divider); }
+  .perf-cell { padding: 10px 13px; background: var(--color-surface); border-right: 1px solid var(--color-divider); }
+  .perf-cell:last-child { border-right: none; }
+  .perf-cell .k { font-size: 11.5px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .perf-cell .v {
+    font-family: var(--font-heading); font-size: 24px; line-height: 1.15; margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .perf-cell .v.up { color: var(--color-accent-800); }
+  .perf-cell .n { font-size: 11px; color: color-mix(in srgb, var(--color-text) 50%, transparent); margin-top: 3px; }
+  #perf-total {
+    margin-top: 11px; font-size: 12px; display: flex; gap: 20px; flex-wrap: wrap;
+    color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  }
+  #perf-total b { font-weight: 600; color: var(--color-text); font-variant-numeric: tabular-nums; }
+  @media (max-width: 1100px) {
+    .perf-grid { grid-template-columns: repeat(3, 1fr); }
+    .perf-cell:nth-child(3n) { border-right: none; }
+    .perf-cell:nth-child(-n+3) { border-bottom: 1px solid var(--color-divider); }
+  }
+
   /* chart card */
   #chart-head { display: flex; align-items: baseline; gap: 14px; padding: 13px 18px 10px; flex-wrap: wrap; }
   #chart-head .sym { font-family: var(--font-heading); font-size: 17px; }
@@ -450,6 +472,17 @@
         </div>
       </div>
       <p class="foot-note">15M / 1H 為顯示用即時行情；畫線與副圖指標皆為顯示輔助——規則判斷只用布林通道（進場）＋ATR 追蹤停損（出場），且一律以 4H 收盤棒為準。布林軌道：4H 圖取規則棒的實際數值；15M / 1H / 1D 為前端以同參數（20, 2σ）試算的顯示輔助，不參與規則判斷。</p>
+    </div>
+
+    <div class="blueprint" style="padding:14px 18px 0"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div class="card-title" style="margin-bottom:11px">
+        <span class="t">策略表現 · <span id="perf-sym">—</span></span>
+        <span class="s">只計已平倉的交易，持倉中的浮盈不算成績</span>
+        <span class="tag tag-neutral" style="margin-left:auto">全期 2026-08-01 起</span>
+      </div>
+      <div class="perf-grid" id="perf-grid"></div>
+      <div id="perf-total"></div>
+      <p class="foot-note" style="margin:11px -18px 0">勝率以損益 &gt; 0 認定，打平（0）計為敗；損益已扣手續費與資金費用。獲利因子＝總獲利÷總虧損，賺賠比＝平均獲利÷平均虧損，最大回撤自起始資金起算。與匯出的 Excel 帳本使用同一套定義（<code>py/perf.py</code>）。</p>
     </div>
 
     <div class="blueprint card-pad"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
@@ -2266,6 +2299,59 @@ function updateClockTick() {
     `${fmtHm(nextTick)}<span class="dim">Z · ${rel}</span>`;
 }
 
+// ---------- E18 strategy performance ----------
+
+// Everything here is closed trades only. A number that has no meaning yet
+// (no trades, or no losing trade to divide by) prints "—" / "∞" rather than
+// a zero that would read as a result.
+function renderPerformance(s) {
+  const grid = document.getElementById("perf-grid");
+  if (!grid) return;
+  const st = s && s.symbols ? s.symbols[activeSymbol] : null;
+  const p = st && st.performance;
+  document.getElementById("perf-sym").textContent = activeSymbol || "—";
+
+  const cell = (k, v, note, up) =>
+    `<div class="perf-cell"><div class="k">${k}</div>` +
+    `<div class="v${up ? " up" : ""}">${v}</div>` +
+    `<div class="n">${note || "&nbsp;"}</div></div>`;
+  const ratio = v => (v === null || v === undefined) ? "∞" : fmtNum(v, 2);
+
+  if (!p || !p.trades) {
+    grid.innerHTML =
+      cell("勝率", "—", "尚無已平倉交易") +
+      cell("已平倉", p ? p.trades : 0, "勝 0 · 敗 0") +
+      cell("獲利因子", "—", "總獲利 ÷ 總虧損") +
+      cell("賺賠比", "—", "平均獲利 ÷ 平均虧損") +
+      cell("總損益", "—", "已扣手續費與資金費用") +
+      cell("最大回撤", p ? fmtNum(p.max_dd_pct, 2) + "%" : "—", "自起始資金起算");
+  } else {
+    grid.innerHTML =
+      cell("勝率", fmtNum(p.win_rate, 1) + "%", `${p.wins} 勝 · ${p.losses} 敗`, p.win_rate >= 50) +
+      cell("已平倉", p.trades, "筆（不含持倉中）") +
+      cell("獲利因子", ratio(p.pf), p.pf === null ? "無虧損筆，無從計算" : "總獲利 ÷ 總虧損",
+           p.pf === null || p.pf >= 1) +
+      cell("賺賠比", ratio(p.payoff),
+           `平均賺 ${fmtNum(p.avg_win, 2)} · 賠 ${fmtNum(p.avg_loss, 2)}`,
+           p.payoff === null || p.payoff >= 1) +
+      cell("總損益", fmtSigned(p.net, 2), `${fmtSigned(p.net_pct, 2)}%　已扣成本`, p.net > 0) +
+      cell("最大回撤", fmtNum(p.max_dd_pct, 2) + "%", "自起始資金起算");
+  }
+
+  const all = s && s.performance_all;
+  const totalEl = document.getElementById("perf-total");
+  if (all && all.trades) {
+    totalEl.innerHTML =
+      `全商品合計：<b>${all.trades}</b> 筆已平倉` +
+      `　勝率 <b>${fmtNum(all.win_rate, 1)}%</b>（${all.wins} 勝 · ${all.losses} 敗）` +
+      `　獲利因子 <b>${ratio(all.pf)}</b>` +
+      `　總損益 <b>${fmtSigned(all.net, 2)}</b>（${fmtSigned(all.net_pct, 2)}%）` +
+      `　最大回撤 <b>${fmtNum(all.max_dd_pct, 2)}%</b>`;
+  } else {
+    totalEl.innerHTML = "全商品合計：尚無已平倉交易";
+  }
+}
+
 // ---------- E15/E16 side panels ----------
 
 function renderTriggerPanel(s) {
@@ -2476,6 +2562,7 @@ async function loadSymbolTab(symbol) {
   if (lastSummary) {
     renderAccountCells(lastSummary);
     renderTriggerPanel(lastSummary);
+    renderPerformance(lastSummary);
   }
 }
 

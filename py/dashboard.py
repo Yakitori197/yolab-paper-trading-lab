@@ -37,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 import db as market_db
 import paper_loop as pl
 import paper_store as ps
+import perf
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -334,6 +335,72 @@ def _trigger_status(con, symbol):
     )
 
 
+def _stats_block(closed, equity_rows, cash0):
+    """Serializable 策略表現 block. Ratios that are undefined (no losing
+    trade, or no trades at all) come back as None -- the frontend renders
+    them as ∞/—, because printing a number there would be a claim the data
+    does not support."""
+    stats = perf.compute_stats(closed)
+    return dict(
+        trades=stats["n"], wins=stats["n_win"], losses=stats["n_loss"],
+        win_rate=stats["win_rate"] if stats["n"] else None,
+        avg_win=stats["avg_win"], avg_loss=stats["avg_loss"],
+        payoff=perf.payoff_ratio(stats), pf=perf.profit_factor(stats),
+        net=stats["net"], net_pct=(stats["net"] / cash0 * 100.0) if cash0 else None,
+        fees_total=stats["fees_total"], funding_total=stats["funding_total"],
+        max_dd_pct=perf.max_drawdown_pct(equity_rows, cash0),
+        cash0=cash0,
+    )
+
+
+def _closed_trades(con, symbol):
+    rows = con.execute(
+        "SELECT pnl, fees, funding FROM paper_trades "
+        "WHERE symbol=? AND exit_ts IS NOT NULL AND pnl IS NOT NULL ORDER BY entry_ts",
+        (symbol,)).fetchall()
+    return [dict(pnl=r[0], fees=r[1], funding=r[2]) for r in rows]
+
+
+def _performance(con, symbol):
+    """Win rate / payoff / profit factor / drawdown for one account, derived
+    read-only from paper.db through perf.py -- the same module
+    tools/export_trades.py uses, so the dashboard and the exported workbook
+    can never quote different numbers for the same trades. Open positions are
+    excluded throughout: an unrealized gain is not a result yet."""
+    equity_rows = con.execute(
+        "SELECT ts, equity FROM paper_equity WHERE symbol=? ORDER BY ts", (symbol,)).fetchall()
+    return _stats_block(_closed_trades(con, symbol), equity_rows, CASH0)
+
+
+def _performance_pooled(con, symbols):
+    """All accounts together. Trades pool trivially (they are independent
+    events); the equity curve is each account's own curve forward-filled onto
+    the union of timestamps and summed, seeded at its starting capital, so a
+    total drawdown can be measured even if one symbol started later."""
+    closed = []
+    for symbol in symbols:
+        closed.extend(_closed_trades(con, symbol))
+    per, all_ts = {}, set()
+    for symbol in symbols:
+        rows = con.execute(
+            "SELECT ts, equity FROM paper_equity WHERE symbol=? ORDER BY ts", (symbol,)).fetchall()
+        per[symbol] = rows
+        all_ts.update(r[0] for r in rows)
+    idx = {s: 0 for s in symbols}
+    last = {s: CASH0 for s in symbols}
+    pooled = []
+    for ts in sorted(all_ts):
+        total = 0.0
+        for symbol in symbols:
+            rows = per[symbol]
+            while idx[symbol] < len(rows) and rows[idx[symbol]][0] <= ts:
+                last[symbol] = rows[idx[symbol]][1]
+                idx[symbol] += 1
+            total += last[symbol]
+        pooled.append((ts, total))
+    return _stats_block(closed, pooled, CASH0 * len(symbols))
+
+
 def _managed_status(state):
     """E15: exit-rule snapshot for an OPEN position, derived from paper_state
     plus the deployed batch #8 constants only. r0 (= stop_mult * ATR at
@@ -432,6 +499,7 @@ def api_summary():
         states = {}
         latest_verdicts = {}
         triggers = {}
+        performances = {}
         for symbol in pl.SYMBOLS:
             cur = con_paper.execute(
                 "SELECT last_ts, cash, position_dir, qty, entry_px, entry_ts, stop_disp, equity, updated_at "
@@ -440,6 +508,8 @@ def api_summary():
             states[symbol] = dict(zip(PAPER_STATE_COLS, row)) if row else None
             latest_verdicts[symbol] = _latest_signal_verdict(con_paper, symbol)
             triggers[symbol] = _trigger_status(con_paper, symbol)
+            performances[symbol] = _performance(con_paper, symbol)
+        performance_all = _performance_pooled(con_paper, pl.SYMBOLS)
         health = pl.health_check(con_market, con_paper, pl.epoch_ms())
     finally:
         con_paper.close()
@@ -498,10 +568,12 @@ def api_summary():
         st["latest_verdict"] = latest_verdicts.get(symbol)
         st["trigger"] = triggers.get(symbol)
         st["managed"] = _managed_status(st)
+        st["performance"] = performances.get(symbol)
 
     return dict(
         announcement=pl.ANNOUNCEMENT,
         strategy=pl.strategies.describe(pl.STRATEGY, pl.P),
+        performance_all=performance_all,
         cost_assumption=dict(
             fee_per_side=pl.FEE, slippage_ticks=2, tick_sizes=pl.TICKS,
             funding="binanceusdm 實際資金費率逐期結算（多方付正費率、空方收）",
